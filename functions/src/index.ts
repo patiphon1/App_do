@@ -1,4 +1,7 @@
-import * as functions from "firebase-functions";
+// index.ts — Firebase Functions v2
+
+import { onCall, HttpsError, onRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import nodemailer from "nodemailer";
 import * as crypto from "crypto";
@@ -18,7 +21,7 @@ const transporter = nodemailer.createTransport({
   host: smtpHost,
   port: smtpPort,
   secure: smtpSecure,
-  auth: {user: smtpUser, pass: smtpPass},
+  auth: { user: smtpUser, pass: smtpPass },
 });
 
 // ---------- Helpers ----------
@@ -34,13 +37,13 @@ function randomOtp(len = 6): string {
 const OTP_TTL_SEC   = 5 * 60; // 5 นาที
 const TOKEN_TTL_SEC = 5 * 60; // 5 นาที
 
-// ---------- Functions ----------
-
-// (1) ส่ง OTP ไปอีเมล
-export const sendOtp = functions.https.onCall(async (request) => {
+// =====================================
+// (1) ส่ง OTP ไปอีเมล — v2 onCall
+// =====================================
+export const sendOtp = onCall(async (request) => {
   const email = String(request.data?.email ?? "").trim().toLowerCase();
   if (!email || !email.includes("@")) {
-    throw new functions.https.HttpsError("invalid-argument", "Invalid email");
+    throw new HttpsError("invalid-argument", "Invalid email");
   }
 
   const otp      = randomOtp(6);
@@ -50,7 +53,7 @@ export const sendOtp = functions.https.onCall(async (request) => {
   const db       = admin.firestore();
 
   const userDoc = db.collection("otp_requests").doc(email);
-  await userDoc.set({email}, {merge: true});
+  await userDoc.set({ email }, { merge: true });
   await userDoc.collection("codes").add({
     otpHash,
     createdAt: now,
@@ -66,16 +69,18 @@ export const sendOtp = functions.https.onCall(async (request) => {
     html: `<p>Your OTP is <b>${otp}</b>. It expires in 5 minutes.</p>`,
   });
 
-  return {ok: true};
+  return { ok: true };
 });
 
-// (2) ตรวจ OTP แล้วออก one-time token
-export const verifyOtp = functions.https.onCall(async (request) => {
+// =====================================
+// (2) ตรวจ OTP แล้วออก one-time token — v2 onCall
+// =====================================
+export const verifyOtp = onCall(async (request) => {
   const email = String(request.data?.email ?? "").trim().toLowerCase();
   const code  = String(request.data?.otp ?? "").trim();
 
   if (!email || !code) {
-    throw new functions.https.HttpsError("invalid-argument", "Missing email or otp");
+    throw new HttpsError("invalid-argument", "Missing email or otp");
   }
 
   const codeHash = hashCode(code);
@@ -90,18 +95,18 @@ export const verifyOtp = functions.https.onCall(async (request) => {
     .get();
 
   if (q.empty) {
-    throw new functions.https.HttpsError("permission-denied", "Invalid code");
+    throw new HttpsError("permission-denied", "Invalid code");
   }
 
-  const doc    = q.docs[0];
-  const data   = doc.data();
-  const now    = admin.firestore.Timestamp.now();
+  const doc  = q.docs[0];
+  const data = doc.data();
+  const now  = admin.firestore.Timestamp.now();
 
   if (now.toMillis() > data.expiresAt.toMillis()) {
-    throw new functions.https.HttpsError("deadline-exceeded", "Code expired");
+    throw new HttpsError("deadline-exceeded", "Code expired");
   }
 
-  await doc.ref.update({used: true, usedAt: now});
+  await doc.ref.update({ used: true, usedAt: now });
 
   const token     = crypto.randomBytes(24).toString("hex");
   const expiresAt = admin.firestore.Timestamp.fromMillis(now.toMillis() + TOKEN_TTL_SEC * 1000);
@@ -113,43 +118,184 @@ export const verifyOtp = functions.https.onCall(async (request) => {
     used: false,
   });
 
-  return {ok: true, token};
+  return { ok: true, token };
 });
 
-// (3) ใช้ token เปลี่ยนรหัสใน Firebase Auth
-export const resetPassword = functions.https.onCall(async (request) => {
+// =====================================
+// (3) ใช้ token เปลี่ยนรหัสใน Firebase Auth — v2 onCall
+// =====================================
+export const resetPassword = onCall(async (request) => {
   const email       = String(request.data?.email ?? "").trim().toLowerCase();
   const token       = String(request.data?.token ?? "");
   const newPassword = String(request.data?.newPassword ?? "");
 
   if (!email || !token || newPassword.length < 6) {
-    throw new functions.https.HttpsError("invalid-argument", "Missing fields");
+    throw new HttpsError("invalid-argument", "Missing fields");
   }
 
-  const db  = admin.firestore();
-  const ref = db.collection("password_reset_tokens").doc(token);
+  const db   = admin.firestore();
+  const ref  = db.collection("password_reset_tokens").doc(token);
   const snap = await ref.get();
 
   if (!snap.exists) {
-    throw new functions.https.HttpsError("permission-denied", "Invalid token");
+    throw new HttpsError("permission-denied", "Invalid token");
   }
 
   const payload = snap.data()!;
   const now     = admin.firestore.Timestamp.now();
 
   if (payload.used) {
-    throw new functions.https.HttpsError("permission-denied", "Token used");
+    throw new HttpsError("permission-denied", "Token used");
   }
   if (payload.email !== email) {
-    throw new functions.https.HttpsError("permission-denied", "Token/email mismatch");
+    throw new HttpsError("permission-denied", "Token/email mismatch");
   }
   if (now.toMillis() > payload.expiresAt.toMillis()) {
-    throw new functions.https.HttpsError("deadline-exceeded", "Token expired");
+    throw new HttpsError("deadline-exceeded", "Token expired");
   }
 
   const user = await admin.auth().getUserByEmail(email);
-  await admin.auth().updateUser(user.uid, {password: newPassword});
-  await ref.update({used: true, usedAt: now});
+  await admin.auth().updateUser(user.uid, { password: newPassword });
+  await ref.update({ used: true, usedAt: now });
 
-  return {ok: true};
+  return { ok: true };
+});
+
+// =====================================
+//   AUTO-CLEANUP — v2 onSchedule / onRequest
+// =====================================
+
+// ลบโพสต์ที่หมดอายุ (posts.expiresAt <= now)
+export const cleanExpiredPosts = onSchedule(
+  { schedule: "every 24 hours", timeZone: "Asia/Bangkok" },
+  async () => {
+    const db  = admin.firestore();
+    const now = admin.firestore.Timestamp.now();
+
+    const snap = await db.collection("posts").where("expiresAt", "<=", now).get();
+    const refs = snap.docs.map(d => d.ref);
+
+    while (refs.length) {
+      const chunk = refs.splice(0, 400);
+      const batch = db.batch();
+      chunk.forEach(ref => batch.delete(ref));
+      await batch.commit();
+    }
+
+    console.log(`Deleted ${snap.size} expired posts`);
+  }
+);
+
+// ลบ OTP codes ที่หมดอายุ (collectionGroup: otp_requests/*/codes)
+export const cleanExpiredOtps = onSchedule(
+  { schedule: "every 24 hours", timeZone: "Asia/Bangkok" },
+  async () => {
+    const db  = admin.firestore();
+    const now = admin.firestore.Timestamp.now();
+
+    const snap = await db.collectionGroup("codes").where("expiresAt", "<=", now).get();
+    const refs = snap.docs.map(d => d.ref);
+
+    while (refs.length) {
+      const chunk = refs.splice(0, 400);
+      const batch = db.batch();
+      chunk.forEach(ref => batch.delete(ref));
+      await batch.commit();
+    }
+
+    console.log(`Deleted ${snap.size} expired OTP codes`);
+  }
+);
+
+// ลบ reset tokens ที่หมดอายุ หรือใช้แล้วเกิน 1 วัน
+export const cleanExpiredResetTokens = onSchedule(
+  { schedule: "every 24 hours", timeZone: "Asia/Bangkok" },
+  async () => {
+    const db  = admin.firestore();
+    const now = admin.firestore.Timestamp.now();
+
+    const expired = await db
+      .collection("password_reset_tokens")
+      .where("expiresAt", "<=", now)
+      .get();
+
+    const oneDayAgo = admin.firestore.Timestamp.fromMillis(
+      now.toMillis() - 24 * 60 * 60 * 1000
+    );
+    const usedOld = await db
+      .collection("password_reset_tokens")
+      .where("used", "==", true)
+      .where("usedAt", "<=", oneDayAgo)
+      .get();
+
+    const refs = [...expired.docs, ...usedOld.docs].map(d => d.ref);
+    while (refs.length) {
+      const chunk = refs.splice(0, 400);
+      const batch = db.batch();
+      chunk.forEach(ref => batch.delete(ref));
+      await batch.commit();
+    }
+
+    console.log(`Deleted ${expired.size + usedOld.size} reset tokens`);
+  }
+);
+
+// ปุ่มลัดสำหรับ "เทสด่วน": เรียก HTTPS แล้วลบหมดตาม 3 งานด้านบนทันที
+export const cleanExpiredNow = onRequest(async (_req, res) => {
+  try {
+    const db  = admin.firestore();
+    const now = admin.firestore.Timestamp.now();
+
+    // posts
+    {
+      const snap = await db.collection("posts").where("expiresAt", "<=", now).get();
+      const refs = snap.docs.map(d => d.ref);
+      while (refs.length) {
+        const chunk = refs.splice(0, 400);
+        const batch = db.batch();
+        chunk.forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
+    }
+
+    // otp codes
+    {
+      const snap = await db.collectionGroup("codes").where("expiresAt", "<=", now).get();
+      const refs = snap.docs.map(d => d.ref);
+      while (refs.length) {
+        const chunk = refs.splice(0, 400);
+        const batch = db.batch();
+        chunk.forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
+    }
+    
+    // reset tokens (หมดอายุ + ใช้แล้วเกิน 1 วัน)
+    {
+      const expired = await db.collection("password_reset_tokens")
+        .where("expiresAt", "<=", now).get();
+      const oneDayAgo = admin.firestore.Timestamp.fromMillis(
+        now.toMillis() - 24 * 60 * 60 * 1000
+      );
+      const usedOld = await db.collection("password_reset_tokens")
+        .where("used", "==", true).where("usedAt", "<=", oneDayAgo).get();
+
+      const refs = [...expired.docs, ...usedOld.docs].map(d => d.ref);
+      while (refs.length) {
+        const chunk = refs.splice(0, 400);
+        const batch = db.batch();
+        chunk.forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
+    }
+
+    res.status(200).send("OK: cleaned");
+  } catch (e) {
+    console.error(e);
+    res.status(500).send(String(e));
+  }
+});
+
+export const serverNow = onCall(async () => {
+  return { now: admin.firestore.Timestamp.now().toMillis() };
 });

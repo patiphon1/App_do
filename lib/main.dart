@@ -5,10 +5,13 @@ import 'app_gate.dart';
 import 'features/auth/pages/register_page.dart';
 import 'features/auth/pages/forgot_password_page.dart';
 import 'features/auth/pages/verify_code_page.dart';
-
+import 'services/server_clock.dart';
+import 'features/chat/chat_list_page.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  
+  await ServerClock.sync();
   runApp(const App());
 }
 
@@ -25,6 +28,7 @@ class App extends StatelessWidget {
       routes: {
         '/register': (_) => const RegisterPage(),
         '/forgot': (_) => const ForgotPasswordPage(),
+        '/chat': (_) => const ChatListPage(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/verify') {

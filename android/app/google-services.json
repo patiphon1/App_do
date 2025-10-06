@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:877864462232:android:c5745bd28c45364fad2ded",
+        "mobilesdk_app_id": "1:877864462232:android:c94b6acf18864fdbad2ded",
         "android_client_info": {
-          "package_name": "com.example.app_project"
+          "package_name": "com.example.lab12"
         }
       },
       "oauth_client": [
@@ -31,10 +31,10 @@
               "client_type": 3
             },
             {
-              "client_id": "877864462232-93sv1408aaqdc0njvi011bee524vha7v.apps.googleusercontent.com",
+              "client_id": "877864462232-2ldvof326hel1gn5t3enn865kec3ehnh.apps.googleusercontent.com",
               "client_type": 2,
               "ios_info": {
-                "bundle_id": "com.example.myApp"
+                "bundle_id": "com.example.lab12"
               }
             }
           ]
@@ -67,10 +67,10 @@
               "client_type": 3
             },
             {
-              "client_id": "877864462232-93sv1408aaqdc0njvi011bee524vha7v.apps.googleusercontent.com",
+              "client_id": "877864462232-2ldvof326hel1gn5t3enn865kec3ehnh.apps.googleusercontent.com",
               "client_type": 2,
               "ios_info": {
-                "bundle_id": "com.example.myApp"
+                "bundle_id": "com.example.lab12"
               }
             }
           ]
