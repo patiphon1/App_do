@@ -6,7 +6,7 @@ import 'services/server_clock.dart';
 import '../app_gate.dart'; // กลับไป Gate หลัง logout
 import 'features/auth/pages/create_post_page.dart';
 
-// ✅ เพิ่ม import สำหรับแชท
+//  เพิ่ม import สำหรับแชท
 import 'features/chat/chat_p2p_page.dart';
 import 'services/chat_service.dart';
 
@@ -231,7 +231,14 @@ class _HomePageState extends State<HomePage> {
               active: _tab == 3,
               onTap: () => Navigator.pushNamed(context, '/chat'),
             ),
-            _NavIcon(icon: Icons.person_rounded, active: _tab == 4, onTap: ()=> setState(()=> _tab=4)),
+           _NavIcon(
+              icon: Icons.person_rounded,
+              active: _tab == 4,
+              onTap: () {
+                setState(() => _tab = 4);
+                Navigator.pushNamed(context, '/profile');
+              },
+            ),
           ],
         ),
       ),
@@ -424,9 +431,27 @@ class _PostCard extends StatelessWidget {
           Row(
             children: [
               CircleAvatar(
-                backgroundImage: post.userAvatar.isNotEmpty ? NetworkImage(post.userAvatar) : null,
-                backgroundColor: Colors.grey.shade300,
-                radius: 16,
+                radius: 20,
+                child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                  stream: FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(post.userId)
+                      .snapshots(),
+                  builder: (context, snap) {
+                    if (!snap.hasData) {
+                      return const Icon(Icons.person);
+                    }
+                    final data = snap.data!.data();
+                    final url = data?['photoUrl'] as String?;
+                    if (url == null || url.isEmpty) {
+                      return const Icon(Icons.person);
+                    }
+                    return CircleAvatar(
+                      radius: 20,
+                      backgroundImage: NetworkImage(url),
+                    );
+                  },
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -444,39 +469,43 @@ class _PostCard extends StatelessWidget {
                 icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
                 tooltip: 'แชทกับผู้โพสต์',
                 onPressed: () async {
-                  final myUid = FirebaseAuth.instance.currentUser?.uid;
-                  if (myUid == null) return;
+                final myUid = FirebaseAuth.instance.currentUser?.uid;
+                if (myUid == null) return;
 
-                  // กันกดแชทหาตัวเอง
-                  if (myUid == post.userId) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('นี่คือโพสต์ของคุณเอง')),
-                    );
-                    return;
-                  }
-
-                  final kind = _kindFromTag(post.tag);
-
-                  // 1) สร้าง/เตรียมห้อง
-                  await ChatService.instance.ensureChat(
-                    peerId: post.userId,
-                    kind: kind,
-                    peerName: post.userName, // optional: เก็บไว้โชว์ใน list
+                // กันกดแชทหาตัวเอง
+                if (myUid == post.userId) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('นี่คือโพสต์ของคุณเอง')),
                   );
+                  return;
+                }
 
-                  // 2) ไปหน้าแชท
-                  if (!context.mounted) return;
+                final kind = _kindFromTag(post.tag);
+
+                // 1) สร้าง/เตรียมห้อง พร้อมผูกโพสต์ (1 โพสต์ต่อ 1 แชท)
+               await ChatService.instance.ensureChat(
+                  peerId: post.userId,
+                  kind: kind,
+                  postId: post.id,
+                  postTitle: post.title,
+                );
+
+                // 2) ไปหน้าแชท พร้อมส่ง postId/postTitle ไปแสดงแบนเนอร์
+                if (!context.mounted) return;
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => ChatP2PPage(
-                        peerName: post.userName,
                         peerId: post.userId,
                         kind: kind,
+                        postId: post.id,
+                        postTitle: post.title,
                       ),
                     ),
                   );
-                },
+              },
+
+
               ),
             ],
           ),

@@ -299,3 +299,62 @@ export const cleanExpiredNow = onRequest(async (_req, res) => {
 export const serverNow = onCall(async () => {
   return { now: admin.firestore.Timestamp.now().toMillis() };
 });
+
+
+export const onRatingWrite = onRequest(async (_req, res) => {
+  res.status(405).send("Use Firestore trigger, not HTTP.");
+});
+
+// ถ้าใช้ v2 Firestore triggers:
+import { onDocumentWritten } from "firebase-functions/v2/firestore";
+
+export const accumulateUserRatings = onDocumentWritten(
+  "users/{uid}/ratings/{raterUid}",
+  async (event) => {
+    const db = admin.firestore();
+    const uid = event.params.uid as string;
+
+    let deltaCount = 0;
+    let deltaSum = 0;
+
+    if (!event.data?.before.exists && event.data?.after.exists) {
+      // create
+      const newVal = (event.data.after.data()?.value ?? 0) as number;
+      deltaCount = 1;
+      deltaSum = newVal;
+    } else if (event.data?.before.exists && !event.data?.after.exists) {
+      // delete
+      const oldVal = (event.data.before.data()?.value ?? 0) as number;
+      deltaCount = -1;
+      deltaSum = -oldVal;
+    } else if (event.data?.before.exists && event.data?.after.exists) {
+      // update
+      const oldVal = (event.data.before.data()?.value ?? 0) as number;
+      const newVal = (event.data.after.data()?.value ?? 0) as number;
+      deltaCount = 0;
+      deltaSum = newVal - oldVal;
+    }
+
+    const userRef = db.collection("users").doc(uid);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      const beforeCount = (snap.get("ratingCount") ?? 0) as number;
+      const beforeSum = (snap.get("ratingSum") ?? 0) as number;
+
+      const afterCount = Math.max(0, beforeCount + deltaCount);
+      const afterSum = Math.max(0, beforeSum + deltaSum);
+      const afterAvg = afterCount > 0 ? afterSum / afterCount : 0;
+
+      tx.set(
+        userRef,
+        {
+          ratingCount: afterCount,
+          ratingSum: afterSum,
+          ratingAvg: afterAvg,
+        },
+        { merge: true }
+      );
+    });
+  }
+);

@@ -2,17 +2,22 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // --- OTP/Token: ห้ามแตะจาก client
+    /* ===== OTP/Token ===== */
     match /otp_requests/{email}/codes/{codeId} { allow read, write: if false; }
     match /password_reset_tokens/{token}       { allow read, write: if false; }
 
-    // --- โปรไฟล์ผู้ใช้
+    /* ===== Users ===== */
     match /users/{uid} {
       allow read: if request.auth != null;
       allow create, update: if request.auth != null && request.auth.uid == uid;
+
+      match /ratings/{ratingId} {
+        allow read: if true;
+        allow create, update, delete: if false;
+      }
     }
 
-    // --- โพสต์
+    /* ===== Posts + one-time rating ===== */
     match /posts/{postId} {
       allow read: if true;
 
@@ -22,76 +27,33 @@ service cloud.firestore {
 
       allow update, delete: if request.auth != null
         && resource.data.userId == request.auth.uid;
-    }
 
-    // --- แชท (P2P)
-    match /chats/{chatId} {
-      function isSignedIn() { return request.auth != null; }
-      function oldUsers() { return resource.data.users; }
-      function newUsers() { return request.resource.data.users; }
-      function isMember() {
-        return isSignedIn() && resource.data.users != null
-               && (request.auth.uid in resource.data.users);
-      }
-
-      // อ่านห้อง
-      allow get, list: if isMember();
-
-      // สร้างห้อง
-      allow create: if isSignedIn()
-        && newUsers() is list
-        && newUsers().size() == 2
-        && request.auth.uid in newUsers()
-        && request.resource.data.kind in ['donate','request','swap']
-        && (request.resource.data.lastAt == null || request.resource.data.lastAt is timestamp)
-        && (request.resource.data.lastText == null || request.resource.data.lastText is string)
-        && request.resource.data.unread is map
-        && request.resource.data.peerMap is map;
-
-      // ✅ อัปเดตห้อง — ใช้อันนี้แทนของเก่า
-      allow update: if isMember()
-        // ถ้าไม่ได้ส่ง users มาก็ผ่าน; ถ้าส่ง ต้องเท่าเดิม
-        && (newUsers() == null || (newUsers() == oldUsers() && oldUsers().size() == 2))
-        // อนุญาตแก้เฉพาะฟิลด์เหล่านี้
-        && resource.data.diff(request.resource.data).changedKeys()
-             .hasOnly(['peerMap','kind','lastText','lastAt','unread'])
-        // kind จะไม่แตะก็ได้ ถ้าแตะต้องเป็นค่าเดิมในชุด
-        && (
-             request.resource.data.kind == null ||
-             (request.resource.data.kind in ['donate','request','swap'] &&
-              request.resource.data.kind == resource.data.kind)
-           )
-        // เคลียร์ unread ของตัวเองได้ หรือไม่แตะเลย
-        && (
-             !(request.resource.data.unread is map) ||
-             request.resource.data.unread[request.auth.uid] == 0 ||
-             request.resource.data.unread[request.auth.uid] == resource.data.unread[request.auth.uid]
-           );
-
-      allow delete: if false;
-
-      // -------------------- messages --------------------
-      match /messages/{msgId} {
-        function parentMembers() {
-          return get(/databases/$(database)/documents/chats/$(chatId)).data.users;
-        }
-
-        allow get, list: if isSignedIn() && (request.auth.uid in parentMembers());
-
+      match /ratings/{raterUid} {
+        function isSignedIn() { return request.auth != null; }
+        allow read: if true;
         allow create: if isSignedIn()
-          && (request.auth.uid in parentMembers())
-          && request.resource.data.from == request.auth.uid
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0
-          && request.resource.data.text.size() <= 5000
-          && request.resource.data.createdAt is timestamp; // ✅ ใช้ createdAt
-
+          && request.auth.uid == raterUid
+          && !exists(/databases/$(database)/documents/posts/$(postId)/ratings/$(raterUid))
+          && request.resource.data.keys().hasOnly(['value','by','at'])
+          && request.resource.data.value is number
+          && request.resource.data.value >= 0
+          && request.resource.data.value <= 5
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.at is timestamp;
         allow update, delete: if false;
       }
     }
 
+    /* ===== Chats ===== */
+    match /chats/{chatId} {
+      allow read, write: if request.auth != null;
+      match /messages/{msgId} {
+        allow read, write: if request.auth != null;
+      }
+    }
 
-    // --- ปิดทุกอย่างที่เหลือ
+
+    /* ===== ปิดทุกอย่างที่เหลือ ===== */
     match /{document=**} { allow read, write: if false; }
   }
 }

@@ -21,7 +21,7 @@ class _ChatListPageState extends State<ChatListPage> with TickerProviderStateMix
         leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
         title: const Text('Chat', style: TextStyle(fontWeight: FontWeight.w700)),
         actions: [
-          IconButton(onPressed: (){}, icon: const Icon(Icons.notifications_none_rounded)),
+          IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_none_rounded)),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(44),
@@ -66,7 +66,7 @@ class _ChatListPageState extends State<ChatListPage> with TickerProviderStateMix
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: (){},
+        onPressed: () {},
         child: const Icon(Icons.add),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
@@ -86,16 +86,16 @@ class _ChatList extends StatelessWidget {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: svc.myThreads(kind: kind),
       builder: (context, snap) {
-        // 👉 ช่วยบอกสาเหตุจริง (เช่น index ยังไม่สร้าง / rules ผิด)
         if (snap.hasError) {
           final err = snap.error.toString();
           final isIndex = err.contains('FAILED_PRECONDITION') || err.contains('requires an index');
+          final isDenied = err.contains('PERMISSION_DENIED') || err.contains('permission-denied');
           return _CenteredNote(
             title: 'โหลดรายการแชทไม่สำเร็จ',
             subtitle: isIndex
-                ? 'คิวรีต้องการ Composite Index: users(array-contains) + kind(ASC) + lastAt(DESC)'
-                : err,
-            actionText: isIndex ? 'ตกลง' : null,
+                ? 'ต้องสร้าง Composite Index: users(array-contains) + kind(ASC) + lastAt(DESC)'
+                : (isDenied ? 'สิทธิ์ไม่พอ: ตรวจสอบ Rules ให้ตรงกับ query' : err),
+            actionText: 'ตกลง',
           );
         }
 
@@ -120,6 +120,9 @@ class _ChatList extends StatelessWidget {
             final ts = (data['lastAt'] as Timestamp?)?.toDate();
             final timeLabel = _fmtTime(ts);
 
+            final postId = (data['postId'] as String?) ?? '';
+            final postTitle = (data['postTitle'] as String?) ?? '';
+
             // หา peerId จาก peerMap หรือ users
             String peerId = '';
             final peerMap = data['peerMap'] as Map<String, dynamic>?;
@@ -129,25 +132,29 @@ class _ChatList extends StatelessWidget {
               final users = (data['users'] as List?)?.cast<String>() ?? const <String>[];
               peerId = users.firstWhere((u) => u != myUid, orElse: () => '');
             }
-
-            // กันเอกสารผิดรูป
-            if (peerId.isEmpty) {
-              return const SizedBox.shrink();
-            }
-
-            // ชื่อที่แสดง (ถ้าคุณเก็บที่ users/{uid} ก็สามารถดึงมาแทนได้)
-            final displayName = (data['peerName'] as String?) ?? peerId;
+            if (peerId.isEmpty) return const SizedBox.shrink();
 
             return ListTile(
-              leading: const CircleAvatar(radius: 22),
-              title: Text(
-                displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+              leading: const CircleAvatar(),
+              title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance.collection('users').doc(peerId).snapshots(),
+                builder: (context, snapUser) {
+                  if (!snapUser.hasData) return const Text('กำลังโหลด...');
+                  final u = snapUser.data!.data();
+                  var name = (u?['displayName'] as String?)?.trim();
+                  name = (name == null || name.isEmpty) ? peerId : name;
+
+                  final titleText = postTitle.isNotEmpty ? '$name ($postTitle)' : name!;
+                  return Text(
+                    titleText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  );
+                },
               ),
               subtitle: Text(
-                lastText.isEmpty ? 'เริ่มต้นการสนทนา' : lastText,
+                (lastText.trim().isNotEmpty) ? lastText : 'เริ่มต้นการสนทนา',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -169,15 +176,16 @@ class _ChatList extends StatelessWidget {
                 ],
               ),
               onTap: () async {
-                await svc.clearUnread(peerId); // จะ merge แค่ unread ของตัวเอง
+                await svc.clearUnread(peerId, postId: postId);
                 if (!context.mounted) return;
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => ChatP2PPage(
-                      peerName: displayName,
                       peerId: peerId,
                       kind: kind,
+                      postId: postId,
+                      postTitle: postTitle,
                     ),
                   ),
                 );
@@ -187,18 +195,6 @@ class _ChatList extends StatelessWidget {
         );
       },
     );
-  }
-
-  String _fmtTime(DateTime? dt) {
-    if (dt == null) return '—';
-    final now = DateTime.now();
-    final isToday = dt.year == now.year && dt.month == now.month && dt.day == now.day;
-    if (isToday) {
-      final hh = dt.hour.toString().padLeft(2, '0');
-      final mm = dt.minute.toString().padLeft(2, '0');
-      return '$hh:$mm';
-    }
-    return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}';
   }
 }
 
@@ -216,10 +212,7 @@ class _Nav extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          InkWell(
-            onTap: onTap,
-            child: SizedBox(height: 56, child: Icon(icon, color: color)),
-          ),
+          InkWell(onTap: onTap, child: SizedBox(height: 56, child: Icon(icon, color: color))),
           if ((badge ?? 0) > 0)
             Positioned(
               right: MediaQuery.of(context).size.width * .18,
@@ -237,7 +230,6 @@ class _Nav extends StatelessWidget {
   }
 }
 
-/// กล่องข้อความกลางจอสำหรับ error/โน้ตเล็ก ๆ
 class _CenteredNote extends StatelessWidget {
   const _CenteredNote({required this.title, this.subtitle, this.actionText, this.onAction});
   final String title;
@@ -261,10 +253,22 @@ class _CenteredNote extends StatelessWidget {
             if (actionText != null) ...[
               const SizedBox(height: 12),
               OutlinedButton(onPressed: onAction ?? () {}, child: Text(actionText!)),
-            ]
+            ],
           ],
         ),
       ),
     );
   }
+}
+
+String _fmtTime(DateTime? dt) {
+  if (dt == null) return '—';
+  final now = DateTime.now();
+  final isToday = dt.year == now.year && dt.month == now.month && dt.day == now.day;
+  if (isToday) {
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+  return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}';
 }

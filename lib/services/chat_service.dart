@@ -10,66 +10,121 @@ class ChatService {
 
   String get myUid => _auth.currentUser!.uid;
 
-  /// chatId จาก uid สองฝั่ง (เรียงเพื่อให้ unique)
-  String chatIdOf(String a, String b) => (a.compareTo(b) < 0) ? '${a}_$b' : '${b}_$a';
+  List<String> _pair(String a, String b) => (a.compareTo(b) < 0) ? [a, b] : [b, a];
 
-  /// สร้างห้อง (ครั้งแรก) ให้มีฟิลด์ตาม Rules
+  String chatIdOf(String a, String b, {String? postId}) {
+    final p = _pair(a, b);
+    return (postId == null || postId.isEmpty)
+        ? '${p[0]}_${p[1]}'
+        : 'p:$postId:${p[0]}_${p[1]}';
+  }
+
+  /// สร้าง/อัปเดตห้องให้พร้อมใช้งานกับ Rules/Query
   Future<void> ensureChat({
     required String peerId,
-    required String kind,       // 'donate' | 'request' | 'swap'
-    String? peerName,
+    required String kind,          // 'donate' | 'request' | 'swap'
+    String? postId,
+    String? postTitle,
   }) async {
     final uid = myUid;
-    final cid = chatIdOf(uid, peerId);
+    final cid = chatIdOf(uid, peerId, postId: postId);
+    final pair = _pair(uid, peerId);
     final chatRef = _fire.collection('chats').doc(cid);
 
     await chatRef.set({
-      'users': [uid, peerId],
+      'id': cid,
+      'users': pair,
       'peerMap': { uid: peerId, peerId: uid },
       'kind': kind,
-      'lastText': null,
-      'lastAt': FieldValue.serverTimestamp(), // หรือจะตั้งเป็น null ก็ได้ตาม Rules
-      'unread': { uid: 0, peerId: 0 },
-      if (peerName != null) 'peerName': peerName,
+      'postId': postId ?? '',
+      'postTitle': postTitle ?? '',
+      'lastText': FieldValue.delete(),          // ให้เป็น null/ไม่มีได้
+      'lastAt': FieldValue.serverTimestamp(),   // ใช้กับ orderBy
+      'unread': { pair[0]: 0, pair[1]: 0 },
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
 
-  /// ส่งข้อความ + อัปเดตสรุปแชท (lastText/lastAt/unread)
+  Future<void> sendSystemMessage({
+    required String peerId,
+    required String text,
+    required String kind,
+    String? postId,
+    String? postTitle,
+  }) async {
+    final uid = myUid;
+    final cid = chatIdOf(uid, peerId, postId: postId);
+    final chatRef = _fire.collection('chats').doc(cid);
+
+    await ensureChat(peerId: peerId, kind: kind, postTitle: postTitle, postId: postId);
+
+    final batch = _fire.batch();
+    final msgRef = chatRef.collection('messages').doc();
+
+    batch.set(msgRef, {
+      'from': uid,
+      'text': text,
+      'type': 'system',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    batch.set(chatRef, {
+      'lastText': text,
+      'lastAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    await batch.commit();
+  }
+
   Future<void> sendMessage({
     required String peerId,
     required String text,
-    required String kind, // 'donate' | 'request' | 'swap'
+    required String kind,
+    String? postId,
+    String? postTitle,
   }) async {
     final uid = myUid;
-    final cid = chatIdOf(uid, peerId);
-    final now = FieldValue.serverTimestamp();
-
+    final cid = chatIdOf(uid, peerId, postId: postId);
     final chatRef = _fire.collection('chats').doc(cid);
-    final msgRef = chatRef.collection('messages').doc();
+    final msgRef  = chatRef.collection('messages').doc();
 
-    await _fire.runTransaction((trx) async {
-      // ✅ อัปเดตเฉพาะฟิลด์ที่ Rules อนุญาตในขั้น update
-      // (ไม่แตะ users)
-      trx.set(chatRef, {
-        // ถ้าห้องยังไม่เคยมี kind (สร้างครั้งแรกด้วย ensureChat) ก็ไม่จำเป็นต้องส่งซ้ำ
-        'lastText': text,
-        'lastAt': now,
-        'unread': { peerId: FieldValue.increment(1), uid: 0 },
-      }, SetOptions(merge: true));
+    await ensureChat(peerId: peerId, kind: kind, postTitle: postTitle, postId: postId);
 
-      // ✅ เขียนข้อความ ใช้ createdAt ตาม Rules
-      trx.set(msgRef, {
-        'from': uid,
-        'to': peerId,            // ไม่ได้ถูกบังคับโดย Rules แต่ใส่ไว้ก็ดี
-        'text': text,
-        'createdAt': now,
-      });
+    final batch = _fire.batch();
+
+    batch.set(msgRef, {
+      'from': uid,
+      'to': peerId,
+      'text': text,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    batch.set(chatRef, {
+      'kind': kind,
+      'lastText': text,
+      'lastAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'unread.$peerId': FieldValue.increment(1),
+    }, SetOptions(merge: true));
+
+    await batch.commit();
+  }
+
+  Future<void> clearUnread(String peerId, {String? postId}) async {
+    final cid = chatIdOf(myUid, peerId, postId: postId);
+    final ref = _fire.collection('chats').doc(cid);
+    final snap = await ref.get();
+    if (!snap.exists) return;
+    await ref.update({
+      'unread.$myUid': 0,
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
-  /// อ่านข้อความในห้อง (ใหม่อยู่ล่าง)
-  Stream<QuerySnapshot<Map<String, dynamic>>> messages(String peerId) {
-    final cid = chatIdOf(myUid, peerId);
+  Stream<QuerySnapshot<Map<String, dynamic>>> messages(String peerId, {String? postId}) {
+    final cid = chatIdOf(myUid, peerId, postId: postId);
     return _fire
         .collection('chats')
         .doc(cid)
@@ -78,21 +133,35 @@ class ChatService {
         .snapshots();
   }
 
-  /// อ่านรายชื่อห้องของฉัน ตาม kind
+  /// รายการห้องของฉันตาม kind (ให้ตรงกับ Rules/Index)
   Stream<QuerySnapshot<Map<String, dynamic>>> myThreads({required String kind}) {
     return _fire
         .collection('chats')
-        .where('users', arrayContains: myUid)
+        .where('users', arrayContains: myUid)   // ← ตรงกับ Rules
         .where('kind', isEqualTo: kind)
         .orderBy('lastAt', descending: true)
+        .limit(50)                              // ← กัน query กว้างเกิน
         .snapshots();
   }
 
-  /// เคลียร์ unread ของตัวเองในห้องนั้น
-  Future<void> clearUnread(String peerId) async {
-    final cid = chatIdOf(myUid, peerId);
-    await _fire.collection('chats').doc(cid).set({
-      'unread': { myUid: 0 } // merge:true จะอัปเดตเฉพาะ key ของเรา
-    }, SetOptions(merge: true));
+  /// one-time rating (คงเดิม)
+  Future<void> ratePostOnce({
+    required String postId,
+    required num value, // 0..5
+  }) async {
+    final uid = myUid;
+    final rRef = _fire.collection('posts').doc(postId).collection('ratings').doc(uid);
+
+    await _fire.runTransaction((tx) async {
+      final snap = await tx.get(rRef);
+      if (snap.exists) {
+        throw StateError('คุณให้คะแนนโพสต์นี้ไปแล้ว');
+      }
+      tx.set(rRef, {
+        'value': value,
+        'by': uid,
+        'at': FieldValue.serverTimestamp(),
+      });
+    });
   }
 }
