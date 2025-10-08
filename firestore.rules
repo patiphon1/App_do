@@ -44,14 +44,78 @@ service cloud.firestore {
       }
     }
 
-    /* ===== Chats ===== */
+    /* ===== Chats (ปลอดภัย: เฉพาะผู้ร่วมแชทอ่าน/เขียนได้) ===== */
     match /chats/{chatId} {
-      allow read, write: if request.auth != null;
+      function isSignedIn() { return request.auth != null; }
+      function isParticipant() {
+        return isSignedIn()
+          && resource.data.users.hasAny([request.auth.uid]);
+      }
+      function isParticipantOnCreate() {
+        return isSignedIn()
+          && request.resource.data.users.hasAny([request.auth.uid]);
+      }
+
+      // อ่านห้องได้เฉพาะผู้ร่วมแชท
+      allow read: if isParticipant();
+
+      // สร้าง/อัปเดตห้องได้เฉพาะผู้ร่วมแชท
+      allow create: if isParticipantOnCreate()
+        && request.resource.data.keys().hasOnly([
+          'id','users','peerMap','kind','postId','postTitle',
+          'lastText','lastAt','unread','createdAt','updatedAt'
+        ])
+        && request.resource.data.users.size() == 2;
+
+      allow update: if isParticipant();
+
+      // ข้อความในห้อง
       match /messages/{msgId} {
-        allow read, write: if request.auth != null;
+        function isMsgParticipant() {
+          return isSignedIn()
+            && get(/databases/$(database)/documents/chats/$(chatId)).data.users.hasAny([request.auth.uid]);
+        }
+
+        allow read: if isMsgParticipant();
+
+        // อนุญาต 3 รูปแบบ:
+        // 1) text: {from,to,text,createdAt} (+ optional type='text')
+        // 2) image: {from,to,type='image',imageUrl,storagePath,[width,height,size],createdAt}
+        // 3) system: {from,type='system',text,createdAt}  (ไม่มี to)
+        allow create: if isMsgParticipant()
+          && request.resource.data.from == request.auth.uid
+          && (
+              // system
+              (
+                request.resource.data.type == 'system'
+                && request.resource.data.keys().hasOnly(['from','type','text','createdAt'])
+                && request.resource.data.text is string
+              )
+              ||
+              // image
+              (
+                request.resource.data.type == 'image'
+                && request.resource.data.keys().hasOnly([
+                  'from','to','type','imageUrl','storagePath','width','height','size','createdAt'
+                ])
+                && request.resource.data.to in get(/databases/$(database)/documents/chats/$(chatId)).data.users
+                && request.resource.data.imageUrl is string
+                && request.resource.data.storagePath is string
+              )
+              ||
+              // text (type อาจไม่ส่งมาก็ถือเป็น text)
+              (
+                (!('type' in request.resource.data) || request.resource.data.type == 'text')
+                && request.resource.data.keys().hasOnly(['from','to','text','createdAt'])
+                && request.resource.data.to in get(/databases/$(database)/documents/chats/$(chatId)).data.users
+                && request.resource.data.text is string
+              )
+          );
+
+        // ไม่ให้แก้/ลบข้อความย้อนหลัง
+        allow update, delete: if false;
       }
     }
-
 
     /* ===== ปิดทุกอย่างที่เหลือ ===== */
     match /{document=**} { allow read, write: if false; }

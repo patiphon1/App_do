@@ -1,22 +1,9 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-
-    // --- รูปจากโพสต์ (เปิดสาธารณะ)
-    match /posts/{userId}/{fileName} {
-      // อ่านได้ทุกคน (โพสต์โชว์ได้)
-      allow read: if true;
-      // เขียน/ลบ ได้เฉพาะเจ้าของ
-      allow write: if request.auth != null && request.auth.uid == userId;
+    // อ่านได้ทุกคน, เขียนได้ทุกคน (⚠️ DEV เท่านั้น)
+    match /{allPaths=**} {
+      allow read, write: if true;
     }
-
-    // --- รูปโปรไฟล์ของผู้ใช้ (users/{uid}/...)
-    match /users/{uid}/{allPaths=**} {
-      // อนุญาตอ่านเฉพาะคนที่ล็อกอิน
-      allow read: if request.auth != null;
-      // เขียน/ลบ ได้เฉพาะเจ้าของ uid นั้น
-      allow write: if request.auth != null && request.auth.uid == uid;
-    }
-
   }
 }

@@ -14,26 +14,15 @@ import 'features/auth/pages/profile_view_page.dart';
 import 'features/auth/pages/profile_edit_page.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
-  // ✅ เริ่มต้น Firebase
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
-  // ✅ เปิด App Check โหมด Debug (ถ้าคุณเปิด enforce ใน Firestore)
   await FirebaseAppCheck.instance.activate(
-    androidProvider: AndroidProvider.debug,
+    androidProvider: AndroidProvider.debug, // emulator/เครื่อง dev
     appleProvider: AppleProvider.debug,
   );
 
-  // ✅ ล็อกอินชั่วคราว (สำหรับทดสอบ Firestore)
-  if (FirebaseAuth.instance.currentUser == null) {
-    await FirebaseAuth.instance.signInAnonymously();
-    print('👤 Signed in anonymously as: ${FirebaseAuth.instance.currentUser?.uid}');
-  }
-
-  await ServerClock.sync();
-  print('UID = ${FirebaseAuth.instance.currentUser?.uid}');
-  final o = Firebase.app().options;
-  print('🔥 Firebase projectId=${o.projectId}, appId=${o.appId}');
   runApp(const App());
 }
 class App extends StatelessWidget {

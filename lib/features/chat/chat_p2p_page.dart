@@ -1,6 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
+
 import '../../services/chat_service.dart';
 
 class ChatP2PPage extends StatefulWidget {
@@ -24,6 +27,7 @@ class ChatP2PPage extends StatefulWidget {
 class _ChatP2PPageState extends State<ChatP2PPage> {
   final _msg = TextEditingController();
   final _listCtrl = ScrollController();
+  bool _uploading = false;
 
   @override
   void initState() {
@@ -35,6 +39,13 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
       postTitle: widget.postTitle,
     );
   }
+
+  String _kindTh(String k) => switch (k) {
+        'donate' => 'บริจาค',
+        'request' => 'ขอรับ',
+        'swap' => 'แลกเปลี่ยน',
+        _ => k
+      };
 
   Widget _postBanner() => Container(
         width: double.infinity,
@@ -54,13 +65,6 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
           ],
         ),
       );
-
-  String _kindTh(String k) => switch (k) {
-        'donate' => 'บริจาค',
-        'request' => 'ขอรับ',
-        'swap' => 'แลกเปลี่ยน',
-        _ => k
-      };
 
   Future<void> _send() async {
     final txt = _msg.text.trim();
@@ -82,6 +86,30 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOut,
       );
+    }
+  }
+
+  Future<void> _pickAndSendImage() async {
+    if (_uploading) return;
+    try {
+      setState(() => _uploading = true);
+      final file = await ChatService.instance.pickImage(source: ImageSource.gallery);
+      if (file == null) return;
+
+      await ChatService.instance.sendImageMessage(
+        peerId: widget.peerId,
+        kind: widget.kind,
+        imageFile: file,
+        postId: widget.postId,
+        postTitle: widget.postTitle,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('อัปโหลดรูปไม่สำเร็จ: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _uploading = false);
     }
   }
 
@@ -157,6 +185,97 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
     );
   }
 
+  Widget _messageBubble(Map<String, dynamic> m, String myId) {
+    final isMe = m['from'] == myId;
+    final type = (m['type'] ?? 'text') as String;
+    final text = (m['text'] ?? '') as String;
+
+    if (type == 'system') {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Center(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (type == 'image') {
+      final url = (m['imageUrl'] ?? '') as String;
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (!isMe) ...[const CircleAvatar(radius: 12), const SizedBox(width: 6)],
+            Flexible(
+              child: ClipRRect(
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: Radius.circular(isMe ? 16 : 4),
+                  bottomRight: Radius.circular(isMe ? 4 : 16),
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 240),
+                  child: AspectRatio(
+                    aspectRatio: 4 / 5, // ป้องกัน jump layout ถ้ายังโหลดไม่เสร็จ
+                    child: Image.network(url, fit: BoxFit.cover),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // text
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        children: [
+          if (!isMe) ...[const CircleAvatar(radius: 12), const SizedBox(width: 6)],
+          Flexible(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.7,
+              ),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isMe ? const Color(0xFF007AFF) : const Color(0xFFE9E9EB),
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(16),
+                    topRight: const Radius.circular(16),
+                    bottomLeft: Radius.circular(isMe ? 16 : 4),
+                    bottomRight: Radius.circular(isMe ? 4 : 16),
+                  ),
+                ),
+                child: Text(
+                  text,
+                  style: TextStyle(
+                    color: isMe ? Colors.white : Colors.black87,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final myId = FirebaseAuth.instance.currentUser!.uid;
@@ -203,77 +322,7 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
                   controller: _listCtrl,
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                   itemCount: msgs.length,
-                  itemBuilder: (context, i) {
-                    final m = msgs[i].data();
-                    final isMe = m['from'] == myId;
-                    final text = (m['text'] ?? '') as String;
-                    final type = (m['type'] ?? 'text') as String;
-                    final ts = m['createdAt'] as Timestamp?;
-                    final time = ts != null
-                        ? TimeOfDay.fromDateTime(ts.toDate()).format(context)
-                        : '';
-
-                    if (type == 'system') {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Center(
-                          child: Text(
-                            text,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                              fontStyle: FontStyle.italic,
-                            ),
-                          ),
-                        ),
-                      );
-                    }
-
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        mainAxisAlignment:
-                            isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                        children: [
-                          if (!isMe) ...[
-                            const CircleAvatar(radius: 12),
-                            const SizedBox(width: 6),
-                          ],
-                          Flexible(
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth: MediaQuery.of(context).size.width * 0.7,
-                              ),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: isMe ? const Color(0xFF007AFF) : const Color(0xFFE9E9EB),
-                                  borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(16),
-                                    topRight: const Radius.circular(16),
-                                    bottomLeft: Radius.circular(isMe ? 16 : 4),
-                                    bottomRight: Radius.circular(isMe ? 4 : 16),
-                                  ),
-                                ),
-                                child: Text(
-                                  text,
-                                  style: TextStyle(
-                                    color: isMe ? Colors.white : Colors.black87,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          if (time.isNotEmpty)
-                            Text(time, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                          if (isMe) const SizedBox(width: 6),
-                        ],
-                      ),
-                    );
-                  },
+                  itemBuilder: (context, i) => _messageBubble(msgs[i].data(), myId),
                 );
               },
             ),
@@ -284,6 +333,14 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
               child: Row(
                 children: [
+                  IconButton(
+                    tooltip: 'เลือกรูป',
+                    onPressed: _uploading ? null : _pickAndSendImage,
+                    icon: _uploading
+                        ? const SizedBox(
+                            width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.photo),
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _msg,
