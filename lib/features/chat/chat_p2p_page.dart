@@ -8,17 +8,19 @@ import '../../services/chat_service.dart';
 
 class ChatP2PPage extends StatefulWidget {
   const ChatP2PPage({
-    super.key,
-    required this.peerId,
-    required this.kind,
-    required this.postId,
-    required this.postTitle,
-  });
+  super.key,
+  required this.peerId,
+  required this.kind,
+  required this.postId,
+  required this.postTitle,
+  required this.chatId,
+});
 
   final String peerId;
   final String kind;
   final String postId;
   final String postTitle;
+  final String chatId;
 
   @override
   State<ChatP2PPage> createState() => _ChatP2PPageState();

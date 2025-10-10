@@ -178,6 +178,7 @@ class _ChatList extends StatelessWidget {
               onTap: () async {
                 await svc.clearUnread(peerId, postId: postId);
                 if (!context.mounted) return;
+                final chatId = docs[i].id;
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -186,6 +187,7 @@ class _ChatList extends StatelessWidget {
                       kind: kind,
                       postId: postId,
                       postTitle: postTitle,
+                      chatId: chatId,
                     ),
                   ),
                 );

@@ -173,15 +173,15 @@ class ChatService {
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> myThreads({required String kind}) {
-    return _fire
-        .collection('chats')
-        .where('users', arrayContains: myUid)
-        .where('kind', isEqualTo: kind)
-        .orderBy('lastAt', descending: true)
-        .limit(50)
-        .snapshots();
-  }
-
+  return _fire
+      .collection('chats')                    
+      .where('users', arrayContains: myUid)   
+      .where('kind', isEqualTo: kind)         // ✅ กรองตามหมวดหมู่ (บริจาค / ขอรับ / แลกเปลี่ยน)
+      .orderBy('lastAt', descending: true)
+      .limit(50)
+      .snapshots();
+}
+  
   /// ---------- ส่วน "ส่งรูป" ----------
 
   /// เปิดแกลเลอรี/กล้อง แล้วคืนไฟล์ (บีบคุณภาพเล็กน้อย)
@@ -206,9 +206,6 @@ class ChatService {
     final uid = myUid;
     final ts = DateTime.now().millisecondsSinceEpoch;
     const ext = 'jpg';
-
-    // ✅ ย้ายมาเก็บในโฟลเดอร์ posts ของ "ผู้ส่ง"
-    // โครงสร้าง: posts/{uid}/chat/{chatId}/{timestamp}.jpg
     final path = 'posts/$uid/chat/$chatId/$ts.$ext';
 
     final ref = _storage.ref(path);
