@@ -1,5 +1,4 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
+// lib/services/chat_service.dart
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,6 +15,7 @@ class ChatService {
   String get myUid => _auth.currentUser!.uid;
   List<String> _pair(String a, String b) => (a.compareTo(b) < 0) ? [a, b] : [b, a];
 
+  // ---------- IDs ----------
   String chatIdOf(String a, String b, {String? postId}) {
     final p = _pair(a, b);
     return (postId == null || postId.isEmpty)
@@ -23,10 +23,10 @@ class ChatService {
         : 'p:$postId:${p[0]}_${p[1]}';
   }
 
-  /// เตรียมห้องให้พร้อมใช้งาน/Query ตาม Rules
+  // ---------- Chats ----------
   Future<void> ensureChat({
     required String peerId,
-    required String kind,          // 'donate' | 'request' | 'swap'
+    required String kind, // 'announce' | 'donate' | 'swap' | 'request'
     String? postId,
     String? postTitle,
   }) async {
@@ -49,61 +49,61 @@ class ChatService {
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
-  Future<void> ratePostOnce({
-    required String postId,
-    required num value, // 0..5
-  }) async {
+
+  Future<void> clearUnreadByChatId(String chatId) async {
     final uid = myUid;
-
-    // validate ฝั่งแอป (rules ก็ตรวจซ้ำอยู่แล้ว)
-    final v = value.toDouble();
-    if (v < 0 || v > 5) {
-      throw ArgumentError('rating must be between 0 and 5');
-    }
-
-    final postRef = _fire.collection('posts').doc(postId);
-    final ratingRef = postRef.collection('ratings').doc(uid); // doc id = raterUid
-
-    // ป้องกันให้คะแนนตัวเอง (เผื่อเรียกเมธอดนี้จากที่อื่น)
-    final postSnap = await postRef.get();
-    final ownerId = postSnap.data()?['userId'] as String?;
-    if (ownerId != null && ownerId == uid) {
-      throw StateError('cannot rate your own post');
-    }
-
-    // ใช้ transaction เพื่อให้ "create ครั้งเดียว" ตาม rules
-    await _fire.runTransaction((tx) async {
-      final exist = await tx.get(ratingRef);
-      if (exist.exists) {
-        throw StateError('already rated');
-      }
-      tx.set(ratingRef, {
-        'value': v,
-        'by': uid,
-        'at': FieldValue.serverTimestamp(),
-      });
-    });
+    await _fire.collection('chats').doc(chatId).set({
+      'unread.$uid': 0,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
-  Future<void> sendSystemMessage({
-    required String peerId,
+
+  // รองรับโค้ดเก่า: svc.clearUnread(peerId, postId: ...)
+  Future<void> clearUnread(String peerId, {String? postId}) async {
+    final cid = chatIdOf(myUid, peerId, postId: postId);
+    await clearUnreadByChatId(cid);
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> myThreads({required String kind}) {
+    return _fire
+        .collection('chats')
+        .where('users', arrayContains: myUid)
+        .where('kind', isEqualTo: kind)
+        .orderBy('lastAt', descending: true)
+        .limit(50)
+        .snapshots();
+  }
+
+  // ---------- Messages ----------
+  Stream<QuerySnapshot<Map<String, dynamic>>> messagesStreamByChatId(String chatId) {
+    return _fire
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .orderBy('createdAt', descending: false)
+        .snapshots();
+  }
+
+  // รองรับโค้ดเก่า: svc.messages(peerId, postId: ...)
+  Stream<QuerySnapshot<Map<String, dynamic>>> messages(String peerId, {String? postId}) {
+    final cid = chatIdOf(myUid, peerId, postId: postId);
+    return messagesStreamByChatId(cid);
+  }
+
+  // ===== ส่งข้อความ =====
+  Future<void> _sendSystem({
+    required String chatId,
     required String text,
-    required String kind,
-    String? postId,
-    String? postTitle,
   }) async {
     final uid = myUid;
-    final cid = chatIdOf(uid, peerId, postId: postId);
-    final chatRef = _fire.collection('chats').doc(cid);
-
-    await ensureChat(peerId: peerId, kind: kind, postTitle: postTitle, postId: postId);
-
     final batch = _fire.batch();
+    final chatRef = _fire.collection('chats').doc(chatId);
     final msgRef = chatRef.collection('messages').doc();
 
     batch.set(msgRef, {
       'from': uid,
-      'text': text,
       'type': 'system',
+      'text': text,
       'createdAt': FieldValue.serverTimestamp(),
     });
 
@@ -116,27 +116,21 @@ class ChatService {
     await batch.commit();
   }
 
-  Future<void> sendMessage({
+  Future<void> sendText({
+    required String chatId,
     required String peerId,
     required String text,
     required String kind,
-    String? postId,
-    String? postTitle,
   }) async {
     final uid = myUid;
-    final cid = chatIdOf(uid, peerId, postId: postId);
-    final chatRef = _fire.collection('chats').doc(cid);
-    final msgRef  = chatRef.collection('messages').doc();
-
-    await ensureChat(peerId: peerId, kind: kind, postTitle: postTitle, postId: postId);
-
     final batch = _fire.batch();
+    final chatRef = _fire.collection('chats').doc(chatId);
+    final msgRef = chatRef.collection('messages').doc();
 
     batch.set(msgRef, {
       'from': uid,
       'to': peerId,
       'text': text,
-      // ไม่ส่ง type = 'text' ก็ได้ (Rules อนุมานเป็น text)
       'createdAt': FieldValue.serverTimestamp(),
     });
 
@@ -151,107 +145,71 @@ class ChatService {
     await batch.commit();
   }
 
-  Future<void> clearUnread(String peerId, {String? postId}) async {
-    final cid = chatIdOf(myUid, peerId, postId: postId);
-    final ref = _fire.collection('chats').doc(cid);
-    final snap = await ref.get();
-    if (!snap.exists) return;
-    await ref.update({
-      'unread.$myUid': 0,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  Stream<QuerySnapshot<Map<String, dynamic>>> messages(String peerId, {String? postId}) {
-    final cid = chatIdOf(myUid, peerId, postId: postId);
-    return _fire
-        .collection('chats')
-        .doc(cid)
-        .collection('messages')
-        .orderBy('createdAt', descending: false)
-        .snapshots();
-  }
-
-  Stream<QuerySnapshot<Map<String, dynamic>>> myThreads({required String kind}) {
-  return _fire
-      .collection('chats')                    
-      .where('users', arrayContains: myUid)   
-      .where('kind', isEqualTo: kind)         // ✅ กรองตามหมวดหมู่ (บริจาค / ขอรับ / แลกเปลี่ยน)
-      .orderBy('lastAt', descending: true)
-      .limit(50)
-      .snapshots();
-}
-  
-  /// ---------- ส่วน "ส่งรูป" ----------
-
-  /// เปิดแกลเลอรี/กล้อง แล้วคืนไฟล์ (บีบคุณภาพเล็กน้อย)
-  Future<File?> pickImage({ImageSource source = ImageSource.gallery}) async {
-    final picker = ImagePicker();
-    final x = await picker.pickImage(source: source, imageQuality: 88);
-    if (x == null) return null;
-    return File(x.path);
-  }
-
-  /// อัปโหลดรูปขึ้น Storage แล้วคืน meta ที่ต้องใช้เขียนข้อความภาพ
-  Future<({
-    String downloadUrl,
-    String storagePath,
-    int width,
-    int height,
-    int size
-  })> uploadChatImage({
-    required String chatId,
-    required File file,
-  }) async {
-    final uid = myUid;
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    const ext = 'jpg';
-    final path = 'posts/$uid/chat/$chatId/$ts.$ext';
-
-    final ref = _storage.ref(path);
-    final task = ref.putFile(file, SettableMetadata(contentType: 'image/jpeg'));
-    await task.whenComplete(() => null);
-
-    final url = await ref.getDownloadURL();
-    final meta = await ref.getMetadata();
-    final bytes = meta.size ?? 0;
-
-    return (downloadUrl: url, storagePath: path, width: 0, height: 0, size: bytes);
-  }
-
-  /// ส่งข้อความประเภท 'image'
-  Future<void> sendImageMessage({
+  // wrapper ชื่อเดิม: sendMessage(...)
+  Future<void> sendMessage({
     required String peerId,
     required String kind,
-    required File imageFile,
+    required String text,
     String? postId,
     String? postTitle,
   }) async {
-    final uid = myUid;
-    final cid = chatIdOf(uid, peerId, postId: postId);
-    final chatRef = _fire.collection('chats').doc(cid);
-
     await ensureChat(peerId: peerId, kind: kind, postId: postId, postTitle: postTitle);
+    final cid = chatIdOf(myUid, peerId, postId: postId);
+    await sendText(chatId: cid, peerId: peerId, text: text, kind: kind);
+  }
 
-    final m = await uploadChatImage(chatId: cid, file: imageFile);
+  // ===== รูปภาพ =====
+  Future<Map<String, String>> uploadChatImage({
+    required String chatId,
+    required XFile xfile,
+  }) async {
+    final uid = myUid;
+    final ext = xfile.name.split('.').last.toLowerCase();
+    final path = 'chat_uploads/$chatId/${DateTime.now().millisecondsSinceEpoch}_$uid.$ext';
 
-    final msgRef = chatRef.collection('messages').doc();
+    final data = await xfile.readAsBytes();
+    final ref = _storage.ref().child(path);
+    final meta = SettableMetadata(
+      contentType: (ext == 'png')
+          ? 'image/png'
+          : (ext == 'gif')
+              ? 'image/gif'
+              : 'image/jpeg',
+    );
+
+    await ref.putData(data, meta);
+    final url = await ref.getDownloadURL();
+    return { 'imageUrl': url, 'storagePath': path };
+  }
+
+  Future<void> sendImage({
+    required String chatId,
+    required String peerId,
+    required String imageUrl,
+    required String storagePath,
+    int? width,
+    int? height,
+    int? size,
+  }) async {
+    final uid = myUid;
     final batch = _fire.batch();
+    final chatRef = _fire.collection('chats').doc(chatId);
+    final msgRef = chatRef.collection('messages').doc();
 
     batch.set(msgRef, {
       'from': uid,
       'to': peerId,
       'type': 'image',
-      'imageUrl': m.downloadUrl,
-      'storagePath': m.storagePath,
-      'width': m.width,
-      'height': m.height,
-      'size': m.size,
+      'imageUrl': imageUrl,
+      'storagePath': storagePath,
+      if (width != null) 'width': width,
+      if (height != null) 'height': height,
+      if (size != null) 'size': size,
       'createdAt': FieldValue.serverTimestamp(),
     });
 
     batch.set(chatRef, {
-      'lastText': '📷 Photo',
+      'lastText': '[ส่งรูปภาพ]',
       'lastAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
       'unread.$peerId': FieldValue.increment(1),
@@ -259,4 +217,116 @@ class ChatService {
 
     await batch.commit();
   }
-}
+
+  // เลือกรูปจากเครื่อง
+  Future<XFile?> pickImage({required ImageSource source}) async {
+    final picker = ImagePicker();
+    final x = await picker.pickImage(source: source, imageQuality: 85);
+    return x;
+  }
+
+  // ===== ซิกเนเจอร์ “ตรงตามที่หน้า UI เรียก” =====
+  // sendImageMessage(peerId:, kind:, imageFile:, postId:, postTitle:)
+  Future<void> sendImageMessage({
+    String? chatId,
+    required String peerId,
+    required XFile imageFile,
+    required String kind,
+    String? postId,
+    String? postTitle,
+  }) async {
+    final cid = chatId ?? chatIdOf(myUid, peerId, postId: postId);
+    // เผื่อห้องยังไม่ถูก set
+    await ensureChat(peerId: peerId, kind: kind, postId: postId, postTitle: postTitle);
+    final meta = await uploadChatImage(chatId: cid, xfile: imageFile);
+    await sendImage(
+      chatId: cid,
+      peerId: peerId,
+      imageUrl: meta['imageUrl']!,
+      storagePath: meta['storagePath']!,
+    );
+  }
+
+  // sendSystemMessage(peerId:, kind:, text:, postId:, postTitle:)
+  Future<void> sendSystemMessage({
+    required String peerId,
+    required String kind,
+    required String text,
+    String? postId,
+    String? postTitle,
+  }) async {
+    final cid = chatIdOf(myUid, peerId, postId: postId);
+    // ให้แน่ใจว่าห้องพร้อมและอัปเดต kind/postTitle ด้วย
+    await ensureChat(peerId: peerId, kind: kind, postId: postId, postTitle: postTitle);
+    await _sendSystem(chatId: cid, text: text);
+  }
+
+  // ===== Rating (1 รอบ/คน/โพสต์) =====
+  Future<void> ratePostOnce({
+    required String postId,
+    required double value, // 1..5
+  }) async {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final intVal = value.round().clamp(1, 5);
+    final _fire = FirebaseFirestore.instance;
+
+    final postRef   = _fire.collection('posts').doc(postId);
+    final ratingRef = postRef.collection('ratings').doc(uid);
+
+    try {
+      await _fire.runTransaction((tx) async {
+        // === READS ก่อนทั้งหมด ===
+        final postSnap = await tx.get(postRef);
+        if (!postSnap.exists) throw Exception('โพสต์ถูกลบหรือไม่พบ');
+
+        final post = postSnap.data() as Map<String, dynamic>;
+        final ownerId = post['userId'] as String?;
+        if (ownerId == null) throw Exception('โพสต์นี้ไม่มีเจ้าของ');
+        if (ownerId == uid) throw Exception('ห้ามให้คะแนนตัวเอง');
+
+        final ratedSnap = await tx.get(ratingRef);
+        if (ratedSnap.exists) throw Exception('คุณให้คะแนนโพสต์นี้ไปแล้ว');
+
+        final ownerRef = _fire.collection('users').doc(ownerId);
+        final ownerSnap = await tx.get(ownerRef);
+        final owner = ownerSnap.data() ?? <String, dynamic>{};
+
+        final prevTotal     = (owner['starsTotal']  ?? 0) as int;
+        final prevCount     = (owner['starsRaters'] ?? 0) as int;
+        final prevPostTotal = (post['ratingsTotal'] ?? 0) as int;
+        final prevPostCount = (post['ratingsCount'] ?? 0) as int;
+
+        // === CALC ===
+        final newTotal     = prevTotal + intVal;
+        final newCount     = prevCount + 1;
+        final newAvg       = (newCount == 0) ? 0.0 : newTotal / newCount;
+
+        final newPostTotal = prevPostTotal + intVal;
+        final newPostCount = prevPostCount + 1;
+        final newPostAvg   = newPostTotal / newPostCount;
+
+        // === WRITES หลังจากอ่านครบแล้ว ===
+        tx.set(ratingRef, {
+          'value': intVal,
+          'at': FieldValue.serverTimestamp(),
+        });
+
+        tx.set(ownerRef, {
+          'starsTotal': newTotal,
+          'starsRaters': newCount,
+          'starsCount': double.parse(newAvg.toStringAsFixed(1)),
+        }, SetOptions(merge: true));
+
+        tx.update(postRef, {
+          'ratingsTotal': newPostTotal,
+          'ratingsCount': newPostCount,
+          'ratingAvg': double.parse(newPostAvg.toStringAsFixed(2)),
+        });
+      });
+    } on FirebaseException catch (e) {
+      throw Exception(e.message ?? 'ให้คะแนนไม่สำเร็จ (สิทธิ์ไม่ผ่าน)');
+    } catch (e) {
+      throw Exception('ให้คะแนนไม่สำเร็จ: $e');
+    }
+  }
+} 

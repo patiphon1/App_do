@@ -1,11 +1,11 @@
-// lib/features/profile/pages/profile_view_page.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../../widgets/user_reviews_sheet.dart';
+import '../../../widgets/post_reviews_sheet.dart'; // ⬅️ เพิ่ม
 
 class ProfileViewPage extends StatelessWidget {
   const ProfileViewPage({super.key});
-
   String get _uid => FirebaseAuth.instance.currentUser!.uid;
 
   @override
@@ -19,40 +19,31 @@ class ProfileViewPage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('โปรไฟล์',
-            style: TextStyle(fontWeight: FontWeight.w700)),
+        title: const Text('โปรไฟล์', style: TextStyle(fontWeight: FontWeight.w700)),
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: usersDoc,
         builder: (context, userSnap) {
-          if (userSnap.hasError) {
-            return const Center(child: Text('โหลดโปรไฟล์ไม่สำเร็จ'));
-          }
-          if (!userSnap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+          if (userSnap.hasError) return const Center(child: Text('โหลดโปรไฟล์ไม่สำเร็จ'));
+          if (!userSnap.hasData) return const Center(child: CircularProgressIndicator());
 
           final u = userSnap.data!.data() ?? {};
           final displayName = (u['displayName'] ?? 'ผู้ใช้') as String;
           final bio = (u['bio'] ?? '') as String;
           final photoUrl = u['photoUrl'] as String?;
-          final stars = (u['starsCount'] ?? 0).toDouble(); // ⭐ 0–5 คะแนน
+          final stars = (u['starsCount'] ?? 0).toDouble(); // ⭐ 0–5
 
           return CustomScrollView(
             slivers: [
-              // Header
               SliverToBoxAdapter(
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Avatar
                       CircleAvatar(
                         radius: 40,
-                        backgroundImage: (photoUrl != null &&
-                                photoUrl.isNotEmpty)
+                        backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
                             ? NetworkImage(photoUrl)
                             : null,
                         child: (photoUrl == null || photoUrl.isEmpty)
@@ -60,29 +51,20 @@ class ProfileViewPage extends StatelessWidget {
                             : null,
                       ),
                       const SizedBox(width: 16),
-
-                      // Stats + Buttons
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Text(
-                              displayName,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
+                            Text(displayName,
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
                             const SizedBox(height: 8),
 
-                            // ✅ Stats: โพสต์ + ดาว (เต็ม 5 ดวง)
                             StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                               stream: postsStream,
                               builder: (context, postSnap) {
                                 final postCount = postSnap.data?.docs.length ?? 0;
 
-                                Widget stat(String label, Widget valueWidget) =>
-                                    Column(
+                                Widget stat(String label, Widget valueWidget) => Column(
                                   children: [
                                     valueWidget,
                                     const SizedBox(height: 2),
@@ -90,49 +72,48 @@ class ProfileViewPage extends StatelessWidget {
                                   ],
                                 );
 
-                                // ฟังก์ชันสร้างดาวเต็ม 5 ดวง
                                 Widget starRow(double rating) {
                                   return Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
-                                    children: List.generate(5, (i) {
-                                      final filled = rating >= i + 1;
-                                      final half = !filled && rating > i && rating < i + 1;
-                                      return Icon(
-                                        filled
-                                            ? Icons.star_rounded
-                                            : half
-                                                ? Icons.star_half_rounded
-                                                : Icons.star_border_rounded,
-                                        color: Colors.amber,
-                                        size: 22,
-                                      );
-                                    }),
+                                    children: [
+                                      ...List.generate(5, (i) {
+                                        final filled = rating >= i + 1;
+                                        final half = !filled && rating > i && rating < i + 1;
+                                        return Icon(
+                                          filled
+                                              ? Icons.star_rounded
+                                              : half
+                                                  ? Icons.star_half_rounded
+                                                  : Icons.star_border_rounded,
+                                          color: Colors.amber,
+                                          size: 22,
+                                        );
+                                      }),
+                                      const SizedBox(width: 6),
+                                      Text(rating.toStringAsFixed(1),
+                                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                                    ],
                                   );
                                 }
 
                                 return Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceEvenly,
+                                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                   children: [
-                                    stat(
-                                        'โพสต์',
+                                    stat('โพสต์',
                                         Text('$postCount',
                                             style: const TextStyle(
-                                                fontWeight: FontWeight.w800,
-                                                fontSize: 18))),
+                                                fontWeight: FontWeight.w800, fontSize: 18))),
                                     stat('เรตติ้ง', starRow(stars)),
                                   ],
                                 );
                               },
                             ),
-
                             const SizedBox(height: 8),
                             Row(
                               children: [
                                 Expanded(
                                   child: OutlinedButton(
-                                    onPressed: () => Navigator.pushNamed(
-                                        context, '/profile/edit'),
+                                    onPressed: () => Navigator.pushNamed(context, '/profile/edit'),
                                     child: const Text('แก้ไขโปรไฟล์'),
                                   ),
                                 ),
@@ -151,7 +132,6 @@ class ProfileViewPage extends StatelessWidget {
                 ),
               ),
 
-              // Bio
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -160,22 +140,30 @@ class ProfileViewPage extends StatelessWidget {
               ),
               const SliverToBoxAdapter(child: SizedBox(height: 12)),
 
-              // Tabs (เฉพาะโพสต์)
-              const SliverToBoxAdapter(
+              SliverToBoxAdapter(
                 child: Row(
                   children: [
                     Expanded(
                       child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child:
-                            Center(child: Icon(Icons.grid_on_rounded, size: 20)),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: const Center(
+                          child: Icon(Icons.grid_on_rounded, size: 20),
+                        ),
                       ),
                     ),
                     Expanded(
-                      child: Opacity(
-                        opacity: .4,
-                        child: Center(
-                            child: Icon(Icons.person_pin_outlined, size: 20)),
+                      child: GestureDetector(
+                        onTap: () => showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          builder: (_) => UserReviewsSheet(
+                            userId: _uid,
+                            displayName: displayName,
+                          ),
+                        ),
+                        child: const Center(
+                          child: Icon(Icons.person_pin_outlined, size: 20, color: Colors.blueGrey),
+                        ),
                       ),
                     ),
                   ],
@@ -183,7 +171,7 @@ class ProfileViewPage extends StatelessWidget {
               ),
               const SliverToBoxAdapter(child: Divider(height: 1)),
 
-              // ✅ โพสต์ (เรียง createdAt ฝั่ง client)
+              // ✅ Grid: แตะรูปเพื่อเปิดรีวิวของโพสต์นั้น
               StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: postsStream,
                 builder: (context, postSnap) {
@@ -226,21 +214,32 @@ class ProfileViewPage extends StatelessWidget {
                   return SliverPadding(
                     padding: const EdgeInsets.all(1),
                     sliver: SliverGrid(
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 3,
                         mainAxisSpacing: 1,
                         crossAxisSpacing: 1,
                       ),
                       delegate: SliverChildBuilderDelegate(
                         (context, i) {
-                          final p = docs[i].data();
+                          final doc = docs[i];
+                          final p = doc.data();
                           final url = p['imageUrl'] as String?;
-                          return Container(
-                            color: Colors.grey[200],
-                            child: (url != null && url.isNotEmpty)
-                                ? Image.network(url, fit: BoxFit.cover)
-                                : const Icon(Icons.image_not_supported_outlined),
+                          return GestureDetector(
+                            onTap: () => showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              builder: (_) => PostReviewsSheet(
+                                postId: doc.id,
+                                postTitle: p['title'] ?? '',
+                                postImageUrl: url,
+                              ),
+                            ),
+                            child: Container(
+                              color: Colors.grey[200],
+                              child: (url != null && url.isNotEmpty)
+                                  ? Image.network(url, fit: BoxFit.cover)
+                                  : const Icon(Icons.image_not_supported_outlined),
+                            ),
                           );
                         },
                         childCount: docs.length,

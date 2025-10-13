@@ -5,16 +5,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../services/chat_service.dart';
+import '../../widgets/rate_post_dialog.dart';
+import '../../widgets/post_reviews_sheet.dart';
 
 class ChatP2PPage extends StatefulWidget {
   const ChatP2PPage({
-  super.key,
-  required this.peerId,
-  required this.kind,
-  required this.postId,
-  required this.postTitle,
-  required this.chatId,
-});
+    super.key,
+    required this.peerId,
+    required this.kind,
+    required this.postId,
+    required this.postTitle,
+    required this.chatId,
+  });
 
   final String peerId;
   final String kind;
@@ -31,15 +33,31 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
   final _listCtrl = ScrollController();
   bool _uploading = false;
 
+  String? _postOwnerId; // ⬅️ เจ้าของโพสต์ที่แท้จริง (จาก posts/{postId}.userId)
+
   @override
   void initState() {
     super.initState();
+
+    // สร้าง/รับรองแชท
     ChatService.instance.ensureChat(
       peerId: widget.peerId,
       kind: widget.kind,
       postId: widget.postId,
       postTitle: widget.postTitle,
     );
+
+    // ⬅️ ต้องโหลดเจ้าของโพสต์ "ภายใน" initState (เมื่อเปิดหน้ามา)
+    FirebaseFirestore.instance
+        .collection('posts')
+        .doc(widget.postId)
+        .get()
+        .then((doc) {
+      if (!mounted) return;
+      if (doc.exists) {
+        setState(() => _postOwnerId = doc.data()?['userId'] as String?);
+      }
+    });
   }
 
   String _kindTh(String k) => switch (k) {
@@ -113,6 +131,18 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  // เปิดรีวิวของโพสต์นี้
+  void _openPostReviews() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => PostReviewsSheet(
+        postId: widget.postId,
+        postTitle: widget.postTitle,
+      ),
+    );
   }
 
   Future<void> _endChatDialog() async {
@@ -228,7 +258,7 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 240),
                   child: AspectRatio(
-                    aspectRatio: 4 / 5, // ป้องกัน jump layout ถ้ายังโหลดไม่เสร็จ
+                    aspectRatio: 4 / 5,
                     child: Image.network(url, fit: BoxFit.cover),
                   ),
                 ),
@@ -294,12 +324,57 @@ class _ChatP2PPageState extends State<ChatP2PPage> {
           },
         ),
         actions: [
-          if (!isSelf)
-            IconButton(
-              icon: const Icon(Icons.flag_circle_outlined, color: Colors.redAccent),
-              tooltip: 'จบการ${_kindTh(widget.kind)}',
-              onPressed: _endChatDialog,
-            ),
+          // ⭐ ให้ดาว/รีวิว — กันเจ้าของโพสต์ & กันให้ซ้ำ
+          IconButton(
+            tooltip: 'ให้ดาว/เขียนรีวิว',
+            icon: const Icon(Icons.star_rate_rounded),
+            onPressed: () async {
+              final myIdNow = FirebaseAuth.instance.currentUser!.uid;
+
+              // 1) อ่านโพสต์สด ๆ เพื่อเอา owner ที่แน่นอน
+              final postSnap = await FirebaseFirestore.instance
+                  .collection('posts')
+                  .doc(widget.postId)
+                  .get();
+
+              final ownerFromServer = postSnap.data()?['userId'] as String?;
+              debugPrint('[RATE] myId=$myIdNow, postId=${widget.postId}, owner=$ownerFromServer');
+
+              // 2) ถ้ามี owner และตรงกับเรา → กันกด พร้อมบอกค่าจริง (กันงง)
+              if (ownerFromServer != null && ownerFromServer == myIdNow) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('ห้ามให้คะแนนโพสต์ของตัวเอง')),
+                );
+                return;
+              }
+
+              // 3) กัน “ให้ซ้ำ” ก่อนเปิด dialog
+              final ratingRef = FirebaseFirestore.instance
+                  .collection('posts')
+                  .doc(widget.postId)
+                  .collection('ratings')
+                  .doc(myIdNow);
+
+              final already = await ratingRef.get();
+              if (already.exists) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('คุณได้ให้คะแนนโพสต์นี้ไปแล้ว')),
+                );
+                return;
+              }
+
+              // 4) เปิด dialog ให้คะแนน/รีวิว (ถ้า owner หาไม่ได้ ก็ปล่อยไป – rules จะกันเองถ้าเป็นเจ้าของจริง)
+              if (!mounted) return;
+              showRatePostDialog(context, postId: widget.postId);
+            },
+          ),
+
+
+          // 📝 ดูรีวิวของโพสต์นี้
+
+          
         ],
       ),
       body: Column(

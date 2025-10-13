@@ -21,13 +21,9 @@ String _tagTo(PostTag t) =>
 
 String _kindFromTag(PostTag t) {
   switch (t) {
-    case PostTag.donate:
-      return 'donate';
-    case PostTag.swap:
-      return 'swap';
-    case PostTag.announce:
-    default:
-      return 'donate';
+    case PostTag.donate:   return 'donate';
+    case PostTag.swap:     return 'swap';
+    case PostTag.announce: return 'request'; 
   }
 }
 
@@ -113,13 +109,12 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
   Query<Map<String, dynamic>> q = _col
       .where('expiresAt', isGreaterThan: now)
-      .orderBy('expiresAt');
+      .orderBy('expiresAt')                    // ต้องเรียงฟิลด์ที่ถูก where แบบ range ก่อน
+      .orderBy('createdAt', descending: true); // แล้วค่อยเรียงใหม่→เก่าในกลุ่มเดียวกัน
 
   if (_selectedTag != null) {
     q = q.where('tag', isEqualTo: _tagTo(_selectedTag!));
   }
-
-  // ใช้ arrayContains เฉพาะตอนค้นหา เพื่อลดโอกาสชน index
   if (s.isNotEmpty) {
     q = q.where('titleKeywords', arrayContains: s);
   }
@@ -127,31 +122,47 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 }
 
 
-  Future<void> _loadFirst() async {
+  // ====================== ส่วนฟังก์ชันใน _HomePageState ======================
+
+Future<void> _loadFirst() async {
   setState(() => _loading = true);
   try {
     final s = _search.text.trim().toLowerCase();
+    final now = DateTime.now();
 
-    // ดึงจาก Firestore เฉพาะโพสต์ที่ยังไม่หมดอายุ
+    // ดึงโพสต์ทั้งหมด (เรียงตาม createdAt ใหม่ -> เก่า)
     Query<Map<String, dynamic>> q = _col
-        .where('expiresAt', isGreaterThan: ServerClock.now())
-        .orderBy('expiresAt');
+        .orderBy('createdAt', descending: true)
+        .limit(50);
 
     // ถ้ามีการเลือก tag ให้กรองด้วย
     if (_selectedTag != null) {
       q = q.where('tag', isEqualTo: _tagTo(_selectedTag!));
     }
 
-    // ดึงโพสต์ชุดแรก (เพิ่ม limit ได้ตามต้องการ)
-    final snap = await q.limit(50).get();
+    // ดึงจาก Firestore
+    final snap = await q.get();
+
+    // แปลงข้อมูลเอกสารเป็น Post model
     var all = snap.docs.map(Post.fromDoc).toList();
 
-    // ถ้ามีพิมพ์คำค้น — กรองฝั่ง client ให้ค้นไม่ต้องตรงเป๊ะ
+    // 🔹 กรองโพสต์ที่ยังไม่หมดอายุ (expiresAt > ตอนนี้)
+    all = all.where((p) {
+      final doc = snap.docs.firstWhere((d) => d.id == p.id);
+      final expiresAt = (doc.data()?['expiresAt'] as Timestamp?)?.toDate();
+      if (expiresAt == null) return true; // ถ้าไม่มีฟิลด์นี้ก็ไม่กรอง
+      return expiresAt.isAfter(now);
+    }).toList();
+
+    // 🔹 ถ้ามีพิมพ์คำค้น ให้กรองเพิ่มเติม (ค้นไม่ต้องตรงเป๊ะ)
     if (s.isNotEmpty) {
       all = all
           .where((p) => p.title.toLowerCase().contains(s))
           .toList();
     }
+
+    // 🔹 เรียงจากใหม่ → เก่า
+    all.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
     setState(() {
       _items = all;
@@ -168,9 +179,33 @@ Future<void> _loadMore() async {
   if (_cursor == null) return;
   setState(() => _loadingMore = true);
   try {
-    final snap = await _baseQuery().startAfterDocument(_cursor!).limit(10).get();
+    final now = DateTime.now();
+
+    Query<Map<String, dynamic>> q = _col
+        .orderBy('createdAt', descending: true)
+        .startAfterDocument(_cursor!)
+        .limit(10);
+
+    if (_selectedTag != null) {
+      q = q.where('tag', isEqualTo: _tagTo(_selectedTag!));
+    }
+
+    final snap = await q.get();
+    var more = snap.docs.map(Post.fromDoc).toList();
+
+    // 🔹 กรองโพสต์ที่ยังไม่หมดอายุ
+    more = more.where((p) {
+      final doc = snap.docs.firstWhere((d) => d.id == p.id);
+      final expiresAt = (doc.data()?['expiresAt'] as Timestamp?)?.toDate();
+      if (expiresAt == null) return true;
+      return expiresAt.isAfter(now);
+    }).toList();
+
+    // 🔹 เรียงใหม่ -> เก่า เผื่อ Firestore ลำดับไม่เป๊ะ
+    more.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
     setState(() {
-      _items.addAll(snap.docs.map(Post.fromDoc));
+      _items.addAll(more);
       _cursor = snap.docs.isNotEmpty ? snap.docs.last : null;
     });
   } on FirebaseException catch (e) {
@@ -183,6 +218,7 @@ Future<void> _loadMore() async {
     if (mounted) setState(() => _loadingMore = false);
   }
 }
+
 
 
   Future<void> _onRefresh() async {
@@ -334,7 +370,7 @@ Future<void> _loadMore() async {
         body: (context, controller) => TabBarView(
           controller: _tabController,
           dragStartBehavior: DragStartBehavior.down,
-          physics: const BouncingScrollPhysics(),
+          physics: const NeverScrollableScrollPhysics(),
           children: [
             // ===== Home =====
             SafeArea(
@@ -573,7 +609,7 @@ class _PostCard extends StatelessWidget {
               _TagChip(text: switch (post.tag) {
                 PostTag.donate => 'บริจาค',
                 PostTag.swap => 'แลกเปลี่ยน',
-                _ => 'ประกาศ',
+                PostTag.announce => 'ประกาศ',
               }),
               const SizedBox(width: 6),
 
