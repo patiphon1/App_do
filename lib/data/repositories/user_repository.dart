@@ -1,18 +1,42 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../data/models/app_user.dart';
+import '../models/app_user.dart';
 
 class UserRepository {
   UserRepository._();
   static final instance = UserRepository._();
+  final _fire = FirebaseFirestore.instance;
 
-  final _db = FirebaseFirestore.instance;
-  CollectionReference get _users => _db.collection('users');
+  Future<void> createIfNotExists(AppUser u) async {
+    final ref = _fire.collection('users').doc(u.uid);
+    final snap = await ref.get();
 
-  Future<void> createIfNotExists(AppUser user) async {
-    final doc = _users.doc(user.uid);
-    final snap = await doc.get();
     if (!snap.exists) {
-      await doc.set(user.toMap());
+      await ref.set({
+        'uid'         : u.uid,
+        'email'       : u.email,
+        'displayName' : u.displayName,
+        'phone'       : u.phone ?? '',
+        // ช่องเผื่ออนาคต (ยังไม่มีใน AppUser แต่อยากให้มีใน DB)
+        'photoURL'    : '',
+        'bio'         : '',
+        // ค่าเริ่มต้นสรุปดาว/เรตติ้ง
+        'ratingSum'   : 0,
+        'ratingCount' : 0,
+        'ratingAvg'   : 0,
+        'starsTotal'  : 0,
+        'starsRaters' : 0,
+        'starsCount'  : 0,
+        'verified'    : false,
+        'createdAt'   : FieldValue.serverTimestamp(),
+        'updatedAt'   : FieldValue.serverTimestamp(),
+      });
+    } else {
+      await ref.set({
+        'displayName' : u.displayName,
+        'email'       : u.email,
+        'phone'       : u.phone ?? '',
+        'updatedAt'   : FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     }
   }
 }

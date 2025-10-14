@@ -17,6 +17,9 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'features/chat/chat_from_notif_page.dart';
+
+import 'features/auth/pages/admin_verifications_page.dart';
+import 'features/auth/pages/admin_user_manager_page.dart';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 // ใช้ตอน background isolate
 @pragma('vm:entry-point')
@@ -191,6 +194,9 @@ class _AppState extends State<App> {
         '/chat': (_) => const ChatListPage(), // รับ arguments: {'chatId': ...}
         '/profile': (_) => const ProfileViewPage(),
         '/profile/edit': (_) => const ProfileEditPage(),
+
+        '/admin': (_) => const AdminVerificationsPage(),
+        '/admin/users': (_) => const AdminUserManagerPage(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/verify') {

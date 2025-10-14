@@ -2,97 +2,140 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    /* ===== OTP/Token ===== */
+    /* ===== OTP/Token (ปิดหมด) ===== */
     match /otp_requests/{email}/codes/{codeId} { allow read, write: if false; }
     match /password_reset_tokens/{token}       { allow read, write: if false; }
 
-    /* ===== Users ===== */
+    /* ===== Helpers ===== */
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    /* ===== Users (ส่วนข้อมูลส่วนตัว) ===== */
     match /users/{uid} {
-      allow read: if request.auth != null;
+      // อ่าน: เจ้าของหรือแอดมินเท่านั้น
+      allow read: if (isSignedIn() && request.auth.uid == uid) || isAdmin();
 
-      // เจ้าของแก้โปรไฟล์ตัวเองได้
-      allow create, update: if request.auth != null && request.auth.uid == uid;
+      // สร้าง: เจ้าของเท่านั้น และห้ามตั้ง role/verified เอง
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && !('role' in request.resource.data)
+        && (!('verified' in request.resource.data) || request.resource.data.verified == false);
 
-      // ✅ อนุญาตให้อัปเดตสรุปดาวของโปรไฟล์แบบ "เพิ่มขึ้นเท่านั้น"
-      allow update: if request.auth != null
+      // อัปเดตโดยเจ้าของ: เฉพาะฟิลด์โปรไฟล์ที่อนุญาต
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+             'displayName','photoURL','email','phone','bio','fcmTokens'
+           ]);
+
+      // ⭐ อัปเดตสรุปดาวของโปรไฟล์ (เพิ่มขึ้นเท่านั้น) โดยผู้อื่น
+      allow update: if isSignedIn()
         && request.auth.uid != uid
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['starsTotal','starsRaters','starsCount'])
         && ((request.resource.data.starsTotal is int) || (request.resource.data.starsTotal is float))
         && ((request.resource.data.starsRaters is int) || (request.resource.data.starsRaters is float))
         && ((request.resource.data.starsCount is int) || (request.resource.data.starsCount is float))
-        && ( (request.resource.data.starsTotal - (('starsTotal' in resource.data) ? resource.data.starsTotal : 0)) in [1,2,3,4,5] )
-        && ( request.resource.data.starsRaters == (('starsRaters' in resource.data) ? resource.data.starsRaters : 0) + 1 )
+        && ((request.resource.data.starsTotal - (('starsTotal' in resource.data) ? resource.data.starsTotal : 0)) in [1,2,3,4,5])
+        && (request.resource.data.starsRaters == (('starsRaters' in resource.data) ? resource.data.starsRaters : 0) + 1)
         && (
              request.resource.data.starsCount >= (request.resource.data.starsTotal / request.resource.data.starsRaters) - 0.01
              && request.resource.data.starsCount <= (request.resource.data.starsTotal / request.resource.data.starsRaters) + 0.01
            );
 
-      // ✅ กล่องรีวิวของ "ผู้ใช้" (mirror จากการให้ดาวโพสต์)
-      // ใช้พาธสัมพัทธ์ (ห้ามเขียน /users/{uid}/... ซ้ำในนี้)
+      // กล่องรีวิวของ "ผู้ใช้" (mirror จากเรตโพสต์)
       match /ratings/{ratingDoc} {
         allow read: if true;
-
-        allow create: if request.auth != null
-          // คีย์ที่อนุญาต (รวม raterId)
+        allow create: if isSignedIn()
           && request.resource.data.keys().hasOnly(['value','at','comment','postId','postTitle','raterId'])
-          // ผู้เขียนต้องเป็นผู้รีวิวจริง
           && request.resource.data.raterId == request.auth.uid
-          // ค่าเรต
           && request.resource.data.value is int
           && request.resource.data.value >= 1
           && request.resource.data.value <= 5
           && ('at' in request.resource.data)
-          // ความยาวคอมเมนต์ (ถ้ามี)
-          && (!('comment' in request.resource.data)
-              || (request.resource.data.comment is string
-                  && request.resource.data.comment.size() <= 500))
-          // โพสต์ต้องเป็นของ uid นี้
           && exists(/databases/$(database)/documents/posts/$(request.resource.data.postId))
           && get(/databases/$(database)/documents/posts/$(request.resource.data.postId)).data.userId == uid
-          // และต้องมีเรตติ้งของ rater ในโพสต์นั้น (ในคอมมิตนี้หรือก่อนหน้า)
           && existsAfter(/databases/$(database)/documents/posts/$(request.resource.data.postId)/ratings/$(request.auth.uid));
-
-        // ไม่ให้แก้/ลบ
         allow update, delete: if false;
       }
     }
 
-    /* ===== Posts + one-time rating ===== */
-    match /posts/{postId} {
-      // อ่านโพสต์สาธารณะ
+    /* ===== Public Users (ข้อมูลสาธารณะของโปรไฟล์คนอื่น) ===== */
+    match /publicUsers/{uid} {
+      // อ่านได้ทุกคน (เฉพาะฟิลด์ที่เรายอมให้ public เช่น displayName, photoURL, verified)
       allow read: if true;
 
-      // สร้างโพสต์: ต้องเป็นเจ้าของ และ tag ถูกต้อง
-      allow create: if request.auth != null
+      // เขียนเฉพาะเจ้าของ (และจำกัดฟิลด์)
+      allow create, update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+             'displayName','photoURL','verified'
+           ]);
+      allow delete: if isAdmin();
+    }
+
+    /* ===== Verification Requests ===== */
+    match /verifications/{uid} {
+      // ผู้ใช้ส่งคำขอของตัวเองได้ (ครั้งแรก)
+      allow create: if isSignedIn() && request.auth.uid == uid;
+
+      // อ่าน: เจ้าของหรือแอดมิน
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+
+      // อัปเดต:
+      // - แอดมิน: อนุมัติ/ปฏิเสธ
+      // - ผู้ใช้: ส่งใหม่ได้เมื่อเดิมถูกปฏิเสธ → pending และแก้เฉพาะฟิลด์ที่กำหนด
+      allow update: if
+        isAdmin()
+        ||
+        (
+          isSignedIn() && request.auth.uid == uid
+          && resource.data.status == "rejected"
+          && request.resource.data.status == "pending"
+          && request.resource.data.diff(resource.data).changedKeys()
+             .hasOnly(['frontUrl','backUrl','status','createdAt','reviewedAt','reviewedBy','reason'])
+        );
+
+      // ลบ: แอดมินเท่านั้น
+      allow delete: if isAdmin();
+    }
+
+    /* ===== Audit Logs ===== */
+    match /auditLogs/{doc} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();   // (ควรเขียนผ่าน Cloud Function)
+      allow update, delete: if false;
+    }
+
+    /* ===== Posts + one-time rating ===== */
+    match /posts/{postId} {
+      allow read: if true;
+
+      allow create: if isSignedIn()
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.tag in ['announce','donate','swap'];
 
-      // แก้/ลบโพสต์: เฉพาะเจ้าของ
-      allow update, delete: if request.auth != null
+      allow update, delete: if isSignedIn()
         && resource.data.userId == request.auth.uid;
 
-      // ✅ อัปเดตสรุปเรตติ้งของ "โพสต์" แบบเพิ่มขึ้นเท่านั้น
-      allow update: if request.auth != null
+      // อัปเดตรวมเรตติ้งของโพสต์แบบเพิ่มขึ้นเท่านั้น
+      allow update: if isSignedIn()
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(['ratingsTotal','ratingsCount','ratingAvg'])
         && ((request.resource.data.ratingsTotal is int) || (request.resource.data.ratingsTotal is float))
         && ((request.resource.data.ratingsCount is int) || (request.resource.data.ratingsCount is float))
         && ((request.resource.data.ratingAvg   is int) || (request.resource.data.ratingAvg   is float))
-        && ( (request.resource.data.ratingsTotal - (('ratingsTotal' in resource.data) ? resource.data.ratingsTotal : 0)) in [1,2,3,4,5] )
-        && ( request.resource.data.ratingsCount == (('ratingsCount' in resource.data) ? resource.data.ratingsCount : 0) + 1 )
+        && ((request.resource.data.ratingsTotal - (('ratingsTotal' in resource.data) ? resource.data.ratingsTotal : 0)) in [1,2,3,4,5])
+        && (request.resource.data.ratingsCount == (('ratingsCount' in resource.data) ? resource.data.ratingsCount : 0) + 1)
         && (
              request.resource.data.ratingAvg >= (request.resource.data.ratingsTotal / request.resource.data.ratingsCount) - 0.01
              && request.resource.data.ratingAvg <= (request.resource.data.ratingsTotal / request.resource.data.ratingsCount) + 0.01
            )
-        // ต้องมีเอกสารเรตติ้งของผู้ขอ "หลังคอมมิตนี้"
         && existsAfter(/databases/$(database)/documents/posts/$(postId)/ratings/$(request.auth.uid));
 
-      // ✅ เรตติ้งของโพสต์: 1 คน/โพสต์/1 ครั้ง + รองรับ comment/images/ownerId/postTitle
       match /ratings/{raterUid} {
-        function isSignedIn() { return request.auth != null; }
-        function isRaterSelf() { return request.auth != null && request.auth.uid == raterUid; }
+        function isRaterSelf() { return isSignedIn() && request.auth.uid == raterUid; }
 
         allow read: if true;
-
         allow create: if isSignedIn()
           && isRaterSelf()
           && exists(/databases/$(database)/documents/posts/$(postId))
@@ -103,30 +146,22 @@ service cloud.firestore {
           && request.resource.data.value >= 1
           && request.resource.data.value <= 5
           && ('at' in request.resource.data)
-          // comment (ถ้ามี)
           && (!('comment' in request.resource.data)
-              || (request.resource.data.comment is string
-                  && request.resource.data.comment.size() <= 500))
-          // images (ถ้ามี)
+              || (request.resource.data.comment is string && request.resource.data.comment.size() <= 500))
           && (!('images' in request.resource.data)
               || (request.resource.data.images is list
                   && request.resource.data.images.size() <= 5
                   && request.resource.data.images.hasOnly(
                        request.resource.data.images.where(img, img is string)
                      )))
-          // ownerId (ถ้ามี) ต้องตรงกับเจ้าของโพสต์จริง
           && (!('ownerId' in request.resource.data)
-              || request.resource.data.ownerId
-                 == get(/databases/$(database)/documents/posts/$(postId)).data.userId);
-
-        // ไม่ให้แก้/ลบเรตติ้ง
+              || request.resource.data.ownerId == get(/databases/$(database)/documents/posts/$(postId)).data.userId);
         allow update, delete: if false;
       }
     }
 
     /* ===== Chats (เฉพาะผู้ร่วมแชท) ===== */
     match /chats/{chatId} {
-      function isSignedIn() { return request.auth != null; }
       function isParticipant() {
         return isSignedIn() && resource.data.users.hasAny([request.auth.uid]);
       }
@@ -156,32 +191,21 @@ service cloud.firestore {
         allow create: if isMsgParticipant()
           && request.resource.data.from == request.auth.uid
           && (
-              // system
-              (
-                request.resource.data.type == 'system'
+              (request.resource.data.type == 'system'
                 && request.resource.data.keys().hasOnly(['from','type','text','createdAt'])
-                && request.resource.data.text is string
-              )
+                && request.resource.data.text is string)
               ||
-              // image
-              (
-                request.resource.data.type == 'image'
-                && request.resource.data.keys().hasOnly([
-                  'from','to','type','imageUrl','storagePath','width','height','size','createdAt'
-                ])
+              (request.resource.data.type == 'image'
+                && request.resource.data.keys().hasOnly(['from','to','type','imageUrl','storagePath','width','height','size','createdAt'])
                 && request.resource.data.to in get(/databases/$(database)/documents/chats/$(chatId)).data.users
                 && request.resource.data.imageUrl is string
-                && request.resource.data.storagePath is string
-              )
+                && request.resource.data.storagePath is string)
               ||
-              // text
-              (
-                (!('type' in request.resource.data) || request.resource.data.type == 'text')
+              ((!('type' in request.resource.data) || request.resource.data.type == 'text')
                 && request.resource.data.keys().hasOnly(['from','to','text','createdAt'])
                 && request.resource.data.to in get(/databases/$(database)/documents/chats/$(chatId)).data.users
-                && request.resource.data.text is string
-              )
-          );
+                && request.resource.data.text is string)
+            );
 
         allow update, delete: if false;
       }
