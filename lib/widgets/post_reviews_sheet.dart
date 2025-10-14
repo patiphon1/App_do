@@ -1,123 +1,142 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 
 class PostReviewsSheet extends StatelessWidget {
-  final String postId;
-  final String? postTitle;
-  final String? postImageUrl;
   const PostReviewsSheet({
     super.key,
     required this.postId,
-    this.postTitle,
+    required this.postTitle,
     this.postImageUrl,
   });
 
+  final String postId;
+  final String postTitle;
+  final String? postImageUrl;
+
   @override
   Widget build(BuildContext context) {
-    final ratingsQuery = FirebaseFirestore.instance
-        .collection('posts').doc(postId)
+    final q = FirebaseFirestore.instance
+        .collection('posts')
+        .doc(postId)
         .collection('ratings')
         .orderBy('at', descending: true);
 
-    return DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.75,
-      minChildSize: 0.5,
-      maxChildSize: 0.95,
-      builder: (_, controller) {
-        return Material(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          child: Column(
-            children: [
-              const SizedBox(height: 8),
-              Container(width: 40, height: 4,
-                  decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(4))),
-              ListTile(
-                leading: (postImageUrl != null && postImageUrl!.isNotEmpty)
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.network(postImageUrl!, width: 44, height: 44, fit: BoxFit.cover))
-                    : const Icon(Icons.image),
-                title: Text('รีวิวของโพสต์: ${postTitle ?? ''}',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.black26, borderRadius: BorderRadius.circular(999),
               ),
-              const Divider(height: 1),
-              Expanded(
-                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                  stream: ratingsQuery.snapshots(),
-                  builder: (_, snap) {
-                    if (snap.hasError) return const Center(child: Text('โหลดรีวิวไม่สำเร็จ'));
-                    if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-                    final docs = snap.data!.docs;
-                    if (docs.isEmpty) return const Center(child: Text('ยังไม่มีรีวิว'));
+            ),
+            const SizedBox(height: 12),
 
-                    return ListView.separated(
-                      controller: controller,
-                      itemCount: docs.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        final d = docs[i].data();
-                        final v = (d['value'] ?? 0) as int;
-                        final comment = (d['comment'] ?? '') as String;
-                        final images = (d['images'] as List?)?.cast<String>() ?? const <String>[];
-                        final ts = d['at'];
-                        String when = '';
-                        if (ts is Timestamp) {
-                          final dt = ts.toDate();
-                          when =
-                              '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} '
-                              '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-                        }
+            // หัวเรื่องโพสต์
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        if (postImageUrl != null && postImageUrl!.isNotEmpty)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.network(
+                              postImageUrl!, width: 44, height: 44, fit: BoxFit.cover,
+                            ),
+                          ),
+                        if (postImageUrl != null && postImageUrl!.isNotEmpty)
+                          const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            postTitle.isNotEmpty ? postTitle : 'โพสต์นี้',
+                            maxLines: 2, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w700, fontSize: 16),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
 
-                        return ListTile(
-                          title: Row(
-                            children: [
-                              ...List.generate(5, (j) => Icon(
-                                j < v ? Icons.star_rounded : Icons.star_border_rounded,
-                                color: Colors.amber, size: 20,
-                              )),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: q.snapshots(),
+                builder: (context, snap) {
+                  if (snap.hasError) {
+                    return const Center(child: Text('โหลดรีวิวไม่สำเร็จ'));
+                  }
+                  if (!snap.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final docs = snap.data!.docs;
+                  if (docs.isEmpty) {
+                    return const Center(child: Text('ยังไม่มีรีวิวโพสต์นี้'));
+                  }
+                  return ListView.separated(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: docs.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final m = docs[i].data();
+                      final value = (m['value'] ?? 0) as int;
+                      final comment = (m['comment'] ?? '') as String;
+                      final at = (m['at'] as Timestamp?)?.toDate();
+                      return ListTile(
+                        leading: const CircleAvatar(child: Icon(Icons.person)),
+                        title: Row(
+                          children: [
+                            ...List.generate(
+                              5,
+                              (idx) => Icon(
+                                idx < value
+                                    ? Icons.star_rounded
+                                    : Icons.star_border_rounded,
+                                color: Colors.amber, size: 18,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text('$value/5',
+                                style: const TextStyle(fontSize: 12)),
+                            if (at != null) ...[
                               const SizedBox(width: 8),
-                              Text('$v/5 · $when', style: const TextStyle(color: Colors.black54)),
+                              Text(
+                                at.toLocal().toString().substring(0, 19),
+                                style: const TextStyle(
+                                    fontSize: 11, color: Colors.black54),
+                              ),
                             ],
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (comment.isNotEmpty) ...[
-                                const SizedBox(height: 6),
-                                Text(comment),
-                              ],
-                              if (images.isNotEmpty) ...[
-                                const SizedBox(height: 8),
-                                Wrap(
-                                  spacing: 8, runSpacing: 8,
-                                  children: images.map((u) => GestureDetector(
-                                    onTap: () => showDialog(
-                                      context: context,
-                                      builder: (_) => Dialog(
-                                        child: InteractiveViewer(child: Image.network(u, fit: BoxFit.contain)),
-                                      ),
-                                    ),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: Image.network(u, width: 72, height: 72, fit: BoxFit.cover),
-                                    ),
-                                  )).toList(),
-                                ),
-                              ],
-                            ],
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
+                          ],
+                        ),
+                        subtitle: (comment.isNotEmpty)
+                            ? Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(comment),
+                              )
+                            : null,
+                      );
+                    },
+                  );
+                },
               ),
-            ],
-          ),
-        );
-      },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

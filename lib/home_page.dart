@@ -11,7 +11,7 @@ import 'features/auth/pages/create_post_page.dart';
 // แชท
 import 'features/chat/chat_p2p_page.dart';
 import 'services/chat_service.dart';
-
+import 'features/auth/pages/profile_view_page.dart';
 /// -------------------------- Model --------------------------
 enum PostTag { announce, donate, swap }
 PostTag _tagFrom(String? s) =>
@@ -317,6 +317,11 @@ Future<void> _loadMore() async {
               _tabController.animateTo(_currentPage);
               return;
             }
+            if (i == 1) {
+              Navigator.pushNamed(context, '/leaderboard');
+              _tabController.animateTo(_currentPage);
+              return;
+            }
             // 👤 โปรไฟล์
             if (i == 4) {
               Navigator.pushNamed(context, '/profile');
@@ -586,31 +591,72 @@ class _PostCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              CircleAvatar(
-                radius: 20,
-                child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                  stream: FirebaseFirestore.instance
-                      .collection('users')
-                      .doc(post.userId)
-                      .snapshots(),
-                  builder: (context, snap) {
-                    if (!snap.hasData) return const Icon(Icons.person);
-                    final data = snap.data!.data();
-                    final url = data?['photoUrl'] as String?;
-                    if (url == null || url.isEmpty) return const Icon(Icons.person);
-                    return CircleAvatar(radius: 20, backgroundImage: NetworkImage(url));
-                  },
+              StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('publicUsers')
+                    .doc(post.userId)
+                    .snapshots(),
+                builder: (context, snap) {
+  final data = snap.data?.data();
+  final name = (data?['displayName'] ?? post.userName ?? 'ไม่ระบุ').toString();
+  final photoURL = (data?['photoURL'] ?? post.userAvatar ?? '') as String?;
+  final verified = (data?['verified'] ?? false) == true;
+
+  return InkWell(
+    onTap: () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => ProfileViewPage(viewUid: post.userId)),
+      );
+    },
+    borderRadius: BorderRadius.circular(999),
+    child: Row(
+      children: [
+        CircleAvatar(
+          radius: 20,
+          backgroundImage: (photoURL != null && photoURL.isNotEmpty)
+              ? NetworkImage(photoURL)
+              : null,
+          child: (photoURL == null || photoURL.isEmpty)
+              ? const Icon(Icons.person)
+              : null,
+        ),
+        const SizedBox(width: 8),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 180),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(post.userName, style: const TextStyle(fontWeight: FontWeight.w600)),
+              if (verified) ...[
+                const SizedBox(width: 6),
+                const Icon(Icons.verified, size: 16, color: Color(0xFF2ECC71)),
+              ],
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+},
               ),
-              _TagChip(text: switch (post.tag) {
-                PostTag.donate => 'บริจาค',
-                PostTag.swap => 'แลกเปลี่ยน',
-                PostTag.announce => 'ประกาศ',
-              }),
+
+              const Spacer(),
+
+              // แท็กโพสต์
+              _TagChip(
+                text: switch (post.tag) {
+                  PostTag.donate => 'บริจาค',
+                  PostTag.swap => 'แลกเปลี่ยน',
+                  PostTag.announce => 'ประกาศ',
+                },
+              ),
               const SizedBox(width: 6),
 
               // ปุ่มแชทกับเจ้าของโพสต์
@@ -620,24 +666,21 @@ class _PostCard extends StatelessWidget {
                 onPressed: () async {
                   final myUid = FirebaseAuth.instance.currentUser?.uid;
                   if (myUid == null) return;
-
                   if (myUid == post.userId) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('นี่คือโพสต์ของคุณเอง')),
                     );
                     return;
                   }
-
                   final kind = _kindFromTag(post.tag);
-
                   await ChatService.instance.ensureChat(
                     peerId: post.userId,
                     kind: kind,
                     postId: post.id,
                     postTitle: post.title,
                   );
-                  final chatId = ChatService.instance.chatIdOf(myUid, post.userId, postId: post.id);
-    
+                  final chatId = ChatService.instance
+                      .chatIdOf(myUid, post.userId, postId: post.id);
                   if (!context.mounted) return;
                   Navigator.push(
                     context,

@@ -32,7 +32,8 @@ class UserRepository {
       });
     } else {
       await ref.set({
-        'displayName' : u.displayName,
+        if ((u.displayName ?? '').isNotEmpty)
+          'displayName': u.displayName,
         'email'       : u.email,
         'phone'       : u.phone ?? '',
         'updatedAt'   : FieldValue.serverTimestamp(),

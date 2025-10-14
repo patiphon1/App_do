@@ -330,3 +330,75 @@ class ChatService {
     }
   }
 } 
+
+
+Future<void> ratePost({
+  required String postId,
+  required String ownerId,   // uid เจ้าของโพสต์
+  required int value,        // 1..5
+  String? comment,
+}) async {
+  final fs  = FirebaseFirestore.instance;
+  final uid = FirebaseAuth.instance.currentUser!.uid;
+
+  final postRef        = fs.collection('posts').doc(postId);
+  final postRatingRef  = postRef.collection('ratings').doc(uid);
+  final userRatingRef  = fs.collection('users').doc(ownerId).collection('ratings').doc();
+  final publicUserRatingRef = fs.collection('publicUsers').doc(ownerId).collection('ratings').doc();
+
+  // อ่านค่าปัจจุบันเพื่อคำนวณสรุปให้ตรงกับ rules
+  final postSnap = await postRef.get();
+  if (!postSnap.exists) throw 'Post not found';
+
+  final data = postSnap.data()!;
+  final prevTotal = (data['ratingsTotal'] ?? 0) * 1.0;
+  final prevCount = (data['ratingsCount'] ?? 0) * 1.0;
+
+  // กันรีวิวซ้ำ
+  final exist = await postRatingRef.get();
+  if (exist.exists) throw 'คุณรีวิวโพสต์นี้ไปแล้ว';
+
+  final newTotal = prevTotal + value;
+  final newCount = prevCount + 1;
+  final newAvg   = newTotal / newCount;
+
+  final batch = fs.batch();
+
+  // 1) ใส่เอกสารเรตติ้งของโพสต์ (ให้ผ่านเงื่อนไข existsAfter ของ rules)
+  batch.set(postRatingRef, {
+    'value'    : value,
+    'at'       : FieldValue.serverTimestamp(),
+    if (comment != null && comment.isNotEmpty) 'comment': comment,
+    'ownerId'  : ownerId,
+    'postTitle': data['title'] ?? '',
+  });
+
+  // 2) อัปเดตรวมของโพสต์ (ต้องเป็นค่าที่คำนวณตรง)
+  batch.update(postRef, {
+    'ratingsTotal': newTotal,
+    'ratingsCount': newCount,
+    'ratingAvg'   : newAvg,
+  });
+
+  // 3) mirror ไปกล่องรีวิวของเจ้าของโพสต์ (users/…/ratings)
+  batch.set(userRatingRef, {
+    'value'    : value,
+    'at'       : FieldValue.serverTimestamp(),
+    'comment'  : comment ?? '',
+    'postId'   : postId,
+    'postTitle': data['title'] ?? '',
+    'raterId'  : uid,
+  });
+
+  // 4) mirror สาธารณะ (publicUsers/…/ratings) เพื่อให้คนอื่นอ่านได้
+  batch.set(publicUserRatingRef, {
+    'value'    : value,
+    'at'       : FieldValue.serverTimestamp(),
+    'comment'  : comment ?? '',
+    'postId'   : postId,
+    'postTitle': data['title'] ?? '',
+    'raterId'  : uid,
+  });
+
+  await batch.commit();
+}

@@ -1,14 +1,15 @@
+// lib/features/auth/pages/profile_view_page.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../../widgets/user_reviews_sheet.dart';
 import '../../../widgets/post_reviews_sheet.dart';
+import '../../../services/user_doc.dart';
 
 class ProfileViewPage extends StatelessWidget {
   const ProfileViewPage({super.key, this.viewUid});
 
-  /// ถ้าส่ง uid มาจะเปิดโปรไฟล์ของคนนั้น
-  /// ถ้าไม่ส่ง จะเปิดโปรไฟล์ของตัวเอง
+  /// ถ้าส่ง uid -> เปิดโปรไฟล์คนนั้น / ไม่ส่ง -> ของตัวเอง
   final String? viewUid;
 
   @override
@@ -19,14 +20,16 @@ class ProfileViewPage extends StatelessWidget {
       return const Scaffold(body: Center(child: Text('ยังไม่ได้ล็อกอิน')));
     }
 
-    final userDocStream =
-        FirebaseFirestore.instance.collection('users').doc(targetUid).snapshots();
+    final viewingSelf = targetUid == currentUid;
+
+    // ✅ สลับ source อัตโนมัติตามสิทธิ์
+    final userDocStream = UserDoc.streamForView(targetUid);
+
+    // โพสต์ของเจ้าของโปรไฟล์
     final postsStream = FirebaseFirestore.instance
         .collection('posts')
         .where('userId', isEqualTo: targetUid)
         .snapshots();
-
-    final viewingSelf = targetUid == currentUid;
 
     return Scaffold(
       appBar: AppBar(
@@ -43,12 +46,18 @@ class ProfileViewPage extends StatelessWidget {
           }
 
           final u = userSnap.data!.data() ?? {};
+
+          // publicUsers จะมีเฉพาะฟิลด์ public
           final displayName = (u['displayName'] ?? 'ผู้ใช้') as String;
-          final bio = (u['bio'] ?? '') as String;
           final photoURL = u['photoURL'] as String?;
-          final stars = (u['starsCount'] ?? 0).toDouble(); // 0–5
           final verified = (u['verified'] ?? false) == true;
-          final targetRole = u['role'] as String?; // role ของคนที่กำลังดูอยู่
+
+          // สถิติ
+          final stars = (u['starsCount'] ?? 0).toDouble();
+
+          // ฟิลด์ private แสดงเฉพาะตอนดูตัวเอง (หรือถ้า source เป็น users/* จากสิทธิ์แอดมิน)
+          final bio = viewingSelf ? (u['bio'] ?? '') as String : '';
+          final targetRole = viewingSelf ? u['role'] as String? : null;
 
           return CustomScrollView(
             slivers: [
@@ -88,188 +97,199 @@ class ProfileViewPage extends StatelessWidget {
                       const SizedBox(width: 16),
 
                       Expanded(
-  child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-    stream: viewingSelf
-        ? FirebaseFirestore.instance.doc('users/$currentUid').snapshots()
-        : const Stream.empty(),
-    builder: (context, meSnap) {
-      final meRole = viewingSelf ? (meSnap.data?.data()?['role'] as String?) : null;
-      final showOnlyAdmin = viewingSelf && meRole == 'admin';
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // ชื่อ + badge verified
+                            Row(
+                              children: [
+                                Text(
+                                  displayName,
+                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(width: 8),
+                                if (verified) _verifiedBadge(),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
 
-      // ====== ถ้าเป็นแอดมินและกำลังดูโปรไฟล์ตัวเอง -> โชว์ "เฉพาะเมนูแอดมิน" ======
-      if (showOnlyAdmin) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ชื่อ + badge verified (อยากคงหัวเรื่องไว้ให้รู้ว่าเป็นใคร)
-            Row(
-              children: [
-                Text(
-                  displayName,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                            // จำนวนโพสต์ + ดาวเฉลี่ย
+                            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                              stream: postsStream,
+                              builder: (context, postSnap) {
+                                final postCount = postSnap.data?.docs.length ?? 0;
+
+                                Widget stat(String label, Widget valueWidget) => Column(
+                                      children: [
+                                        valueWidget,
+                                        const SizedBox(height: 2),
+                                        Text(label),
+                                      ],
+                                    );
+
+                                Widget starRow(double rating) {
+                                  return Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      ...List.generate(5, (i) {
+                                        final filled = rating >= i + 1;
+                                        final half = !filled && rating > i && rating < i + 1;
+                                        return Icon(
+                                          filled
+                                              ? Icons.star_rounded
+                                              : half
+                                                  ? Icons.star_half_rounded
+                                                  : Icons.star_border_rounded,
+                                          color: Colors.amber,
+                                          size: 22,
+                                        );
+                                      }),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        rating.toStringAsFixed(1),
+                                        style: const TextStyle(fontWeight: FontWeight.w700),
+                                      ),
+                                    ],
+                                  );
+                                }
+
+                                return Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                  children: [
+                                    stat(
+                                      'โพสต์',
+                                      Text(
+                                        '$postCount',
+                                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                                      ),
+                                    ),
+                                    stat('เรตติ้ง', starRow(stars)),
+                                  ],
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 8),
+
+                            // ปุ่มแก้ไขโปรไฟล์: โชว์เฉพาะตอนดูตัวเอง
+                            if (viewingSelf) ...[
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      icon: const Icon(Icons.edit),
+                                      label: const Text('แก้ไขโปรไฟล์'),
+                                      onPressed: () => Navigator.pushNamed(context, '/profile/edit'),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  OutlinedButton(
+                                    onPressed: () {},
+                                    child: const Icon(Icons.more_horiz_rounded),
+                                  ),
+                                ],
+                              ),
+                            ],
+
+                            // ปุ่มลัดให้ดาวจากโพสต์ล่าสุด (เฉพาะตอนดูคนอื่น และมีโพสต์)
+                            if (!viewingSelf) ...[
+                              const SizedBox(height: 8),
+                              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                                stream: postsStream,
+                                builder: (context, ps) {
+                                  final docs = ps.data?.docs ?? const [];
+                                  if (docs.isEmpty) return const SizedBox.shrink();
+                                  final last = docs.first; // สมมติเรียงล่าสุดใน UI แล้ว
+                                  final p = last.data();
+                                  final title = (p['title'] ?? '') as String? ?? '';
+                                  final url = p['imageUrl'] as String?;
+                                  return Align(
+                                    alignment: Alignment.centerLeft,
+                                    
+                                  );
+                                },
+                              ),
+                            ],
+
+                            // แผง Admin tools: โชว์เฉพาะตอนดูตัวเอง + role == admin
+                            if (viewingSelf)
+                              StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                                stream: FirebaseFirestore.instance
+                                    .doc('users/$currentUid')
+                                    .snapshots(),
+                                builder: (context, meSnap) {
+                                  final meRole = meSnap.data?.data()?['role'];
+                                  if (meRole != 'admin') return const SizedBox.shrink();
+                                  return Column(
+                                    children: [
+                                      const SizedBox(height: 16),
+                                      Card(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(12),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                                            children: [
+                                              Row(
+                                                children: const [
+                                                  Icon(Icons.admin_panel_settings, size: 18),
+                                                  SizedBox(width: 8),
+                                                  Text('Admin tools',
+                                                      style: TextStyle(fontWeight: FontWeight.w700)),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Wrap(
+                                                spacing: 8,
+                                                runSpacing: 8,
+                                                children: [
+                                                  ElevatedButton.icon(
+                                                    onPressed: () =>
+                                                        Navigator.pushNamed(context, '/admin'),
+                                                    icon: const Icon(Icons.verified),
+                                                    label: const Text('อนุมัติยืนยันตัวตน'),
+                                                  ),
+                                                  OutlinedButton.icon(
+                                                    onPressed: () =>
+                                                        Navigator.pushNamed(context, '/admin/users'),
+                                                    icon: const Icon(Icons.manage_accounts),
+                                                    label: const Text('จัดการสิทธิ์ผู้ใช้'),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              ),
+
+                            // (ออปชั่น) แสดง role เมื่อดูตัวเอง
+                            if (viewingSelf && (targetRole?.isNotEmpty ?? false)) ...[
+                              const SizedBox(height: 8),
+                              Text('role: $targetRole',
+                                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(width: 8),
-                if (verified) _verifiedBadge(),
+              ),
+
+              // bio (publicUsers ไม่มี bio)
+              if (viewingSelf) ...[
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(bio, style: const TextStyle(height: 1.3)),
+                  ),
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 12)),
               ],
-            ),
-            const SizedBox(height: 16),
 
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: const [
-                        Icon(Icons.admin_panel_settings, size: 18),
-                        SizedBox(width: 8),
-                        Text('Admin tools', style: TextStyle(fontWeight: FontWeight.w700)),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: () => Navigator.pushNamed(context, '/admin'),
-                          icon: const Icon(Icons.verified),
-                          label: const Text('อนุมัติยืนยันตัวตน'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () => Navigator.pushNamed(context, '/admin/users'),
-                          icon: const Icon(Icons.manage_accounts),
-                          label: const Text('จัดการสิทธิ์ผู้ใช้'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      }
-
-      // ====== ผู้ใช้ทั่วไป หรือแอดมินที่กำลังดูโปรไฟล์ "คนอื่น" -> โชว์ UI ปกติ ======
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // ชื่อ + badge verified
-          Row(
-            children: [
-              Text(
-                displayName,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(width: 8),
-              if (verified) _verifiedBadge(),
-            ],
-          ),
-          const SizedBox(height: 8),
-
-          // สถิติ: จำนวนโพสต์ + ดาวเฉลี่ย
-          StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: postsStream,
-            builder: (context, postSnap) {
-              final postCount = postSnap.data?.docs.length ?? 0;
-
-              Widget stat(String label, Widget valueWidget) => Column(
-                    children: [
-                      valueWidget,
-                      const SizedBox(height: 2),
-                      Text(label),
-                    ],
-                  );
-
-              Widget starRow(double rating) {
-                return Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    ...List.generate(5, (i) {
-                      final filled = rating >= i + 1;
-                      final half = !filled && rating > i && rating < i + 1;
-                      return Icon(
-                        filled
-                            ? Icons.star_rounded
-                            : half
-                                ? Icons.star_half_rounded
-                                : Icons.star_border_rounded,
-                        color: Colors.amber,
-                        size: 22,
-                      );
-                    }),
-                    const SizedBox(width: 6),
-                    Text(
-                      rating.toStringAsFixed(1),
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ],
-                );
-              }
-
-              return Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  stat(
-                    'โพสต์',
-                    Text(
-                      '$postCount',
-                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
-                    ),
-                  ),
-                  stat('เรตติ้ง', starRow(stars)),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 8),
-
-          // ปุ่มแก้ไขโปรไฟล์ (เฉพาะเจ้าตัวเอง)
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed:
-                      viewingSelf ? () => Navigator.pushNamed(context, '/profile/edit') : null,
-                  child: const Text('แก้ไขโปรไฟล์'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: () {},
-                child: const Icon(Icons.more_horiz_rounded),
-              ),
-            ],
-          ),
-
-          // ถ้าแอดมินดูโปรไฟล์ "คนอื่น" แสดง role ของเป้าหมายไว้เล็กน้อย
-          if (!viewingSelf && (targetRole?.isNotEmpty ?? false)) ...[
-            const SizedBox(height: 8),
-            Text('role: $targetRole', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          ],
-        ],
-      );
-    },
-  ),
-),
-
-                    ],
-                  ),
-                ),
-              ),
-
-              // bio
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(bio, style: const TextStyle(height: 1.3)),
-                ),
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: 12)),
-
-              // รีวิวผู้ใช้
+              // ปุ่มเปิดรีวิวรวมของผู้ใช้
               SliverToBoxAdapter(
                 child: Row(
                   children: [
@@ -284,9 +304,15 @@ class ProfileViewPage extends StatelessWidget {
                         onTap: () => showModalBottomSheet(
                           context: context,
                           isScrollControlled: true,
-                          builder: (_) => UserReviewsSheet(
-                            userId: targetUid,
-                            displayName: displayName,
+                          useSafeArea: true,
+                          showDragHandle: true,          
+                          enableDrag: true,
+                          builder: (_) => FractionallySizedBox(
+                            heightFactor: 0.6,          
+                            child: UserReviewsSheet(
+                              userId: targetUid,
+                              displayName: displayName,
+                            ),
                           ),
                         ),
                         child: const Center(
@@ -299,7 +325,7 @@ class ProfileViewPage extends StatelessWidget {
               ),
               const SliverToBoxAdapter(child: Divider(height: 1)),
 
-              // Grid โพสต์ (แตะเพื่อดูรีวิวของโพสต์นั้น)
+              // Grid โพสต์ (แตะเพื่อให้ดาว/รีวิวโพสต์นั้น)
               StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: postsStream,
                 builder: (context, postSnap) {
@@ -356,10 +382,16 @@ class ProfileViewPage extends StatelessWidget {
                             onTap: () => showModalBottomSheet(
                               context: context,
                               isScrollControlled: true,
-                              builder: (_) => PostReviewsSheet(
-                                postId: doc.id,
-                                postTitle: p['title'] ?? '',
-                                postImageUrl: url,
+                              useSafeArea: true,
+                              showDragHandle: true,
+                              enableDrag: true,
+                              builder: (_) => FractionallySizedBox(
+                                heightFactor: 0.6,
+                                child: PostReviewsSheet(
+                                  postId: doc.id,
+                                  postTitle: p['title'] ?? '',
+                                  postImageUrl: url,
+                                ),
                               ),
                             ),
                             child: Container(

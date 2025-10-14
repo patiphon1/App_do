@@ -1,0 +1,15 @@
+*** Begin Patch
+*** Update File: lib/features/chat/chat_list_page.dart
+@@
+-import 'chat_p2p_page.dart';
+-import '../../services/chat_service.dart';
++import 'chat_p2p_page.dart';
++import '../../services/chat_service.dart';
++import '../../services/user_doc.dart';
+@@
+-              title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+-                stream: FirebaseFirestore.instance.collection('users').doc(peerId).snapshots(),
++              title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
++                stream: UserDoc.refForView(peerId).snapshots(),
+                 builder: (context, snapUser) {
+*** End Patch

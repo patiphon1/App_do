@@ -23,7 +23,7 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
 
   bool _saving = false;           // บันทึกโปรไฟล์
   bool _verSubmitting = false;    // ส่งคำขอยืนยัน
-  String? _photoUrl;
+  String? _photoURL;
 
   // รูปบัตรที่จะอัปโหลด
   XFile? _front;
@@ -43,11 +43,12 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
   Future<void> _load() async {
     final doc = await _fire.collection('users').doc(_uid).get();
     final u = doc.data() ?? {};
+    if (!mounted) return;
     setState(() {
       _name.text = u['displayName'] ?? _auth.currentUser?.displayName ?? '';
       _bio.text = u['bio'] ?? '';
       _phone.text = u['phone'] ?? '';
-      _photoUrl = u['photoUrl'] ?? _auth.currentUser?.photoURL;
+      _photoURL = (u['photoURL'] ?? _auth.currentUser?.photoURL ?? '') as String?;
     });
   }
 
@@ -59,6 +60,56 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
     super.dispose();
   }
 
+  /// sync publicUsers แบบปลอดภัย: เขียนเฉพาะฟิลด์ที่ "มีจริง"
+  Future<void> _syncPublicUser({
+  String? displayName,
+  String? photoURL,
+}) async {
+  final usersSnap = await _fire.collection('users').doc(_uid).get();
+  final verified = (usersSnap.data()?['verified'] ?? false) == true;
+
+  final name = (displayName ?? '').trim();
+  final photo = (photoURL ?? '').trim();
+
+  // ไม่มีชื่อ/รูป/verified => อย่าพุช publicUsers
+  if (name.isEmpty && photo.isEmpty && !verified) return;
+
+  await _fire.collection('publicUsers').doc(_uid).set({
+    if (name.isNotEmpty) 'displayName': name,
+    if (photo.isNotEmpty) 'photoURL': photo,
+    'verified': verified,
+  }, SetOptions(merge: true));
+}
+
+Future<void> _saveProfile() async {
+  if (!_formKey.currentState!.validate()) return;
+  setState(() => _saving = true);
+  try {
+    final displayName = _name.text.trim();
+
+    await _fire.collection('users').doc(_uid).set({
+      'displayName': displayName,
+      'bio': _bio.text.trim(),
+      'phone': _phone.text.trim(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    if (displayName.isNotEmpty) {
+      await _auth.currentUser?.updateDisplayName(displayName);
+    }
+
+    // sync publicUsers เฉพาะเมื่อมีค่าจริง
+    await _syncPublicUser(
+      displayName: displayName.isNotEmpty ? displayName : null,
+      photoURL: _photoURL?.isNotEmpty == true ? _photoURL : null,
+    );
+
+    if (mounted) Navigator.pop(context);
+  } finally {
+    if (mounted) setState(() => _saving = false);
+  }
+}
+
   Future<void> _pickAvatar() async {
     final x = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 85);
     if (x == null) return;
@@ -67,27 +118,12 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
       final ref = FirebaseStorage.instance.ref('users/$_uid/avatar.jpg');
       await ref.putFile(File(x.path), SettableMetadata(contentType: 'image/jpeg'));
       final url = await ref.getDownloadURL();
-      await _fire.collection('users').doc(_uid).set({'photoUrl': url}, SetOptions(merge: true));
-      setState(() => _photoUrl = url);
-    } finally {
-      setState(() => _saving = false);
-    }
-  }
 
-  Future<void> _saveProfile() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _saving = true);
-    try {
-      await _fire.collection('users').doc(_uid).set({
-        'displayName': _name.text.trim(),
-        'bio': _bio.text.trim(),
-        'phone': _phone.text.trim(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      if (_name.text.trim().isNotEmpty) {
-        await _auth.currentUser?.updateDisplayName(_name.text.trim());
-      }
-      if (mounted) Navigator.pop(context);
+      await _fire.collection('users').doc(_uid).set({'photoURL': url}, SetOptions(merge: true));
+      await _syncPublicUser(photoURL: url);
+
+      if (!mounted) return;
+      setState(() => _photoURL = url);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -143,14 +179,13 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
         'note': null,
       });
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ส่งคำขอยืนยันแล้ว กำลังตรวจสอบ')),
-        );
-        // เคลียร์รูปที่เลือก
-        setState(() { _front = null; _back = null; });
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ส่งคำขอยืนยันแล้ว กำลังตรวจสอบ')),
+      );
+      setState(() { _front = null; _back = null; });
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ผิดพลาด: $e')));
     } finally {
       if (mounted) setState(() => _verSubmitting = false);
@@ -158,7 +193,6 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
   }
 
   Widget _buildVerifySection() {
-    // อ่านสถานะ verifications/{uid} แบบเรียลไทม์
     final stream = _fire.collection('verifications').doc(_uid).snapshots();
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: stream,
@@ -219,7 +253,6 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
                   status == 'approved'
                       ? 'บัญชีนี้ผ่านการตรวจสอบแล้ว'
                       : 'อัปโหลดรูปบัตรประชาชนด้านหน้าและด้านหลังเพื่อยืนยันตัวตน',
-                  style: const TextStyle(color: Colors.black87),
                 ),
                 if (status == 'rejected' && (reason ?? '').isNotEmpty) ...[
                   const SizedBox(height: 8),
@@ -227,14 +260,13 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
                 ],
                 const SizedBox(height: 12),
 
-                // ตัวเลือกภาพหน้า-หลัง
                 Row(
                   children: [
                     Expanded(
                       child: InkWell(
                         onTap: disabled ? null : _pickFront,
                         child: AspectRatio(
-                          aspectRatio: 16/10,
+                          aspectRatio: 16 / 10,
                           child: Container(
                             decoration: BoxDecoration(
                               border: Border.all(color: Colors.grey.shade400),
@@ -253,7 +285,7 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
                       child: InkWell(
                         onTap: disabled ? null : _pickBack,
                         child: AspectRatio(
-                          aspectRatio: 16/10,
+                          aspectRatio: 16 / 10,
                           child: Container(
                             decoration: BoxDecoration(
                               border: Border.all(color: Colors.grey.shade400),
@@ -286,7 +318,6 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 6),
                 const Text(
                   'ข้อแนะนำ: เบลอข้อมูลที่ไม่จำเป็น เช่น แสดงเลขบัตรบางส่วนเท่านั้น และอัปโหลดรูปที่ชัดเจน',
@@ -324,10 +355,10 @@ class _ProfileEditPageState extends State<ProfileEditPage> {
                   onTap: _pickAvatar,
                   child: CircleAvatar(
                     radius: 48,
-                    backgroundImage: (_photoUrl != null && _photoUrl!.isNotEmpty)
-                        ? NetworkImage(_photoUrl!)
+                    backgroundImage: (_photoURL != null && _photoURL!.isNotEmpty)
+                        ? NetworkImage(_photoURL!)
                         : null,
-                    child: (_photoUrl == null || _photoUrl!.isEmpty)
+                    child: (_photoURL == null || _photoURL!.isEmpty)
                         ? const Icon(Icons.person, size: 48)
                         : null,
                   ),

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
 import '../../../services/storage_service.dart';
 
 class CreatePostPage extends StatefulWidget {
@@ -20,7 +19,6 @@ class _CreatePostPageState extends State<CreatePostPage> {
   File? _image;
   bool _loading = false;
 
-  // ------ Utils ------
   List<String> _keywords(String s) {
     return s
         .toLowerCase()
@@ -83,14 +81,20 @@ class _CreatePostPageState extends State<CreatePostPage> {
         imageUrl = await StorageService().uploadPostImage(_image!, user.uid);
       }
 
-      // 2) เขียนเอกสาร
+      // 2) เตรียมข้อมูลเจ้าของจาก users/<uid> (เอาไปติดในโพสต์)
+      final u = user; // แค่ alias ให้โค้ดอ่านง่าย
+      final meSnap = await FirebaseFirestore.instance.doc('users/${u.uid}').get();
+      final me = meSnap.data() ?? <String, dynamic>{};
+
+      // 3) เขียนเอกสารโพสต์
       final now = DateTime.now();
       final expiresAt = Timestamp.fromDate(now.add(const Duration(days: 7)));
 
       await FirebaseFirestore.instance.collection('posts').add({
-        'userId'       : user.uid,
-        'userName'     : user.displayName ?? (user.email ?? 'User'),
-        'userAvatar'   : user.photoURL ?? '',
+        'userId'       : u.uid,
+        'userName'     : u.displayName ?? (u.email ?? 'User'),
+        'userAvatar'   : u.photoURL ?? '',
+
         'title'        : _title.text.trim(),
         'imageUrl'     : imageUrl,
         'tag'          : _tag,                 // 'announce' | 'donate' | 'swap'
@@ -98,6 +102,16 @@ class _CreatePostPageState extends State<CreatePostPage> {
         'expiresAt'    : expiresAt,
         'createdAt'    : FieldValue.serverTimestamp(),
         'titleKeywords': _keywords(_title.text),
+
+        // ✅ ติดข้อมูลเจ้าของไว้กับโพสต์เลย — ลดการอ่าน users/<owner> ทีหลัง
+        'ownerDisplayName': (me['displayName'] ?? u.displayName ?? u.email ?? 'ผู้ใช้'),
+        'ownerPhotoURL'   : (me['photoURL'] ?? u.photoURL ?? ''),
+        'ownerVerified'   : (me['verified'] ?? false) == true,
+
+        // ค่าเรตติ้งตั้งต้น
+        'ratingsTotal': 0,
+        'ratingsCount': 0,
+        'ratingAvg'   : 0,
       });
 
       if (!mounted) return;
@@ -118,23 +132,18 @@ class _CreatePostPageState extends State<CreatePostPage> {
     super.dispose();
   }
 
-  // ------ UI ------
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('สร้างโพสต์'),
-        centerTitle: true,
-        elevation: 0,
-      ),
+      appBar: AppBar(title: const Text('สร้างโพสต์'), centerTitle: true, elevation: 0),
       body: Form(
         key: _formKey,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
-            // Card: Title
+            // ข้อความ
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -192,7 +201,7 @@ class _CreatePostPageState extends State<CreatePostPage> {
 
             const SizedBox(height: 12),
 
-            // Card: Tags (Chips)
+            // หมวดหมู่
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -208,27 +217,9 @@ class _CreatePostPageState extends State<CreatePostPage> {
                       spacing: 10,
                       runSpacing: 10,
                       children: [
-                        _TagChip(
-                          label: 'ประกาศ',
-                          selected: _tag == 'announce',
-                          onTap: () => setState(() => _tag = 'announce'),
-                          bg: const Color(0xFFFFF5E5),
-                          fg: const Color(0xFFAD7A12),
-                        ),
-                        _TagChip(
-                          label: 'บริจาค',
-                          selected: _tag == 'donate',
-                          onTap: () => setState(() => _tag = 'donate'),
-                          bg: const Color(0xFFEAF7EE),
-                          fg: const Color(0xFF2FA562),
-                        ),
-                        _TagChip(
-                          label: 'แลกเปลี่ยน',
-                          selected: _tag == 'swap',
-                          onTap: () => setState(() => _tag = 'swap'),
-                          bg: const Color(0xFFE9F3FF),
-                          fg: const Color(0xFF2E6EEA),
-                        ),
+                        _TagChip(label: 'ประกาศ', selected: _tag == 'announce', onTap: () => setState(() => _tag = 'announce'), bg: const Color(0xFFFFF5E5), fg: const Color(0xFFAD7A12)),
+                        _TagChip(label: 'บริจาค', selected: _tag == 'donate',   onTap: () => setState(() => _tag = 'donate'),   bg: const Color(0xFFEAF7EE), fg: const Color(0xFF2FA562)),
+                        _TagChip(label: 'แลกเปลี่ยน', selected: _tag == 'swap', onTap: () => setState(() => _tag = 'swap'),     bg: const Color(0xFFE9F3FF), fg: const Color(0xFF2E6EEA)),
                       ],
                     ),
                   ],
@@ -238,7 +229,7 @@ class _CreatePostPageState extends State<CreatePostPage> {
 
             const SizedBox(height: 12),
 
-            // Card: Image picker
+            // รูปภาพ
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -250,15 +241,10 @@ class _CreatePostPageState extends State<CreatePostPage> {
                   children: [
                     Text('รูปภาพ (ไม่บังคับ)', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 12),
-
-                    // Preview
                     if (_image != null)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: AspectRatio(
-                          aspectRatio: 16 / 9,
-                          child: Image.file(_image!, fit: BoxFit.cover),
-                        ),
+                        child: AspectRatio(aspectRatio: 16 / 9, child: Image.file(_image!, fit: BoxFit.cover)),
                       )
                     else
                       Container(
@@ -267,13 +253,9 @@ class _CreatePostPageState extends State<CreatePostPage> {
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: cs.outlineVariant),
                         ),
-                        child: Center(
-                          child: Icon(Icons.image_outlined, size: 42, color: cs.outline),
-                        ),
+                        child: Center(child: Icon(Icons.image_outlined, size: 42, color: cs.outline)),
                       ),
-
                     const SizedBox(height: 12),
-
                     Row(
                       children: [
                         FilledButton.icon(
@@ -297,16 +279,13 @@ class _CreatePostPageState extends State<CreatePostPage> {
 
             const SizedBox(height: 20),
 
-            // Submit button
+            // ปุ่มโพสต์
             SizedBox(
               height: 48,
               child: FilledButton(
                 onPressed: _loading ? null : _submit,
                 child: _loading
-                    ? const SizedBox(
-                        height: 22, width: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
+                    ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : const Text('โพสต์'),
               ),
             ),
@@ -334,7 +313,6 @@ class _TagChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     final isSelected = selected;
 
     return InkWell(

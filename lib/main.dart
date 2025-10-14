@@ -17,6 +17,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'features/chat/chat_from_notif_page.dart';
+import 'features/auth/pages/leaderboard_page.dart';
 
 import 'features/auth/pages/admin_verifications_page.dart';
 import 'features/auth/pages/admin_user_manager_page.dart';
@@ -35,6 +36,23 @@ const AndroidNotificationChannel _chatChannel = AndroidNotificationChannel(
   description: 'Notifications for new chat messages',
   importance: Importance.high,
 );
+
+Future<void> backfillPublicUsers() async {
+  final fs = FirebaseFirestore.instance;
+  final users = await fs.collection('users').get();
+  for (final d in users.docs) {
+    final data = d.data();
+    final name = (data['displayName'] ?? data['email'] ?? 'ไม่ระบุ').toString();
+    await fs.collection('publicUsers').doc(d.id).set({
+      'displayName': name,
+      'photoURL': (data['photoURL'] ?? '').toString(),
+      'verified': (data['verified'] ?? false) == true,
+      // รองรับชื่อเก่า (ratingsCount) หรือชื่อใหม่ (ratingCount)
+      'ratingCount': (data['ratingCount'] ?? data['ratingsCount'] ?? 0) as int,
+    }, SetOptions(merge: true));
+  }
+  debugPrint('✅ backfill publicUsers done');
+}
 
 Future<void> _initLocalNotifications() async {
   const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -73,7 +91,7 @@ Future<void> main() async {
 
   // Local noti channel
   await _initLocalNotifications();
-
+  await backfillPublicUsers();
   runApp(const App());
 }
 
@@ -194,7 +212,7 @@ class _AppState extends State<App> {
         '/chat': (_) => const ChatListPage(), // รับ arguments: {'chatId': ...}
         '/profile': (_) => const ProfileViewPage(),
         '/profile/edit': (_) => const ProfileEditPage(),
-
+        '/leaderboard': (_) => const LeaderboardPage(),
         '/admin': (_) => const AdminVerificationsPage(),
         '/admin/users': (_) => const AdminUserManagerPage(),
       },
