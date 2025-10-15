@@ -1,38 +1,23 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/gestures.dart';
-import 'package:flutter_floating_bottom_bar/flutter_floating_bottom_bar.dart';
+import 'package:flutter/material.dart';
 
-import 'services/server_clock.dart';
-import '../app_gate.dart';
-import 'features/auth/pages/create_post_page.dart';
+import '../../widgets/curved_nav_scaffold.dart';
+import '../../features/auth/pages/profile_view_page.dart';
+import '../../features/auth/pages/create_post_page.dart';
+import '../../services/chat_service.dart';
+import '../features/chat/chat_p2p_page.dart';
 
-// แชท
-import 'features/chat/chat_p2p_page.dart';
-import 'services/chat_service.dart';
-import 'features/auth/pages/profile_view_page.dart';
-/// -------------------------- Model --------------------------
 enum PostTag { announce, donate, swap }
 PostTag _tagFrom(String? s) =>
     switch (s) { 'donate' => PostTag.donate, 'swap' => PostTag.swap, _ => PostTag.announce };
 String _tagTo(PostTag t) =>
     switch (t) { PostTag.donate => 'donate', PostTag.swap => 'swap', PostTag.announce => 'announce' };
-
-String _kindFromTag(PostTag t) {
-  switch (t) {
-    case PostTag.donate:   return 'donate';
-    case PostTag.swap:     return 'swap';
-    case PostTag.announce: return 'request'; 
-  }
-}
+String _kindFromTag(PostTag t) =>
+    switch (t) { PostTag.donate => 'donate', PostTag.swap => 'swap', PostTag.announce => 'request' };
 
 class Post {
-  final String id;
-  final String userId;
-  final String userName;
-  final String userAvatar;
-  final String title;
+  final String id, userId, userName, userAvatar, title;
   final String? imageUrl;
   final PostTag tag;
   final int comments;
@@ -54,11 +39,11 @@ class Post {
     final d = doc.data()!;
     return Post(
       id: doc.id,
-      userId: d['userId'] ?? '',
-      userName: d['userName'] ?? '',
-      userAvatar: d['userAvatar'] ?? '',
-      title: d['title'] ?? '',
-      imageUrl: d['imageUrl'],
+      userId: (d['userId'] ?? '').toString(),
+      userName: (d['userName'] ?? '').toString(),
+      userAvatar: (d['userAvatar'] ?? '').toString(),
+      title: (d['title'] ?? '').toString(),
+      imageUrl: d['imageUrl'] as String?,
       tag: _tagFrom(d['tag']),
       comments: (d['comments'] ?? 0) as int,
       createdAt: (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -66,160 +51,103 @@ class Post {
   }
 }
 
-/// ------------------------------ Home Page ------------------------------
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
-  final _search = TextEditingController(text: '');
+class _HomePageState extends State<HomePage> {
   final _col = FirebaseFirestore.instance.collection('posts');
-
+  final _search = TextEditingController();
   List<Post> _items = [];
   DocumentSnapshot<Map<String, dynamic>>? _cursor;
-  bool _loading = false;
-  bool _loadingMore = false;
-  int _notif = 2;           // ถ้าจะโชว์ badge ในไอคอนแชท เพิ่มได้
-  int _activeFilters = 0;
+  bool _loading = false, _loadingMore = false;
+  int _chatBadge = 2;
   PostTag? _selectedTag;
-
-  late int _currentPage;
-  late TabController _tabController;
+  int _activeFilters = 0;
 
   @override
   void initState() {
     super.initState();
-    _currentPage = 0;
-    _tabController = TabController(length: 5, vsync: this);
     _loadFirst();
   }
 
   @override
   void dispose() {
     _search.dispose();
-    _tabController.dispose();
     super.dispose();
   }
 
-  Query<Map<String, dynamic>> _baseQuery() {
-  final now = ServerClock.now();
-  final s = _search.text.trim().toLowerCase();
+  Future<void> _loadFirst() async {
+    setState(() => _loading = true);
+    try {
+      Query<Map<String, dynamic>> q =
+          _col.orderBy('createdAt', descending: true).limit(50);
+      if (_selectedTag != null) {
+        q = q.where('tag', isEqualTo: _tagTo(_selectedTag!));
+      }
+      final snap = await q.get();
+      final now = DateTime.now();
+      var all = snap.docs.map(Post.fromDoc).toList();
 
-  Query<Map<String, dynamic>> q = _col
-      .where('expiresAt', isGreaterThan: now)
-      .orderBy('expiresAt')                    // ต้องเรียงฟิลด์ที่ถูก where แบบ range ก่อน
-      .orderBy('createdAt', descending: true); // แล้วค่อยเรียงใหม่→เก่าในกลุ่มเดียวกัน
+      // keep only not-expired
+      all = all.where((p) {
+        final doc = snap.docs.firstWhere((d) => d.id == p.id);
+        final expiresAt = (doc.data()['expiresAt'] as Timestamp?)?.toDate();
+        return expiresAt == null || expiresAt.isAfter(now);
+      }).toList();
 
-  if (_selectedTag != null) {
-    q = q.where('tag', isEqualTo: _tagTo(_selectedTag!));
-  }
-  if (s.isNotEmpty) {
-    q = q.where('titleKeywords', arrayContains: s);
-  }
-  return q;
-}
+      // keyword filter (client side)
+      final s = _search.text.trim().toLowerCase();
+      if (s.isNotEmpty) {
+        all = all.where((p) => p.title.toLowerCase().contains(s)).toList();
+      }
 
+      all.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-  // ====================== ส่วนฟังก์ชันใน _HomePageState ======================
-
-Future<void> _loadFirst() async {
-  setState(() => _loading = true);
-  try {
-    final s = _search.text.trim().toLowerCase();
-    final now = DateTime.now();
-
-    // ดึงโพสต์ทั้งหมด (เรียงตาม createdAt ใหม่ -> เก่า)
-    Query<Map<String, dynamic>> q = _col
-        .orderBy('createdAt', descending: true)
-        .limit(50);
-
-    // ถ้ามีการเลือก tag ให้กรองด้วย
-    if (_selectedTag != null) {
-      q = q.where('tag', isEqualTo: _tagTo(_selectedTag!));
+      setState(() {
+        _items = all;
+        _cursor = snap.docs.isNotEmpty ? snap.docs.last : null;
+      });
+    } catch (e) {
+      debugPrint('loadFirst error: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
-
-    // ดึงจาก Firestore
-    final snap = await q.get();
-
-    // แปลงข้อมูลเอกสารเป็น Post model
-    var all = snap.docs.map(Post.fromDoc).toList();
-
-    // 🔹 กรองโพสต์ที่ยังไม่หมดอายุ (expiresAt > ตอนนี้)
-    all = all.where((p) {
-      final doc = snap.docs.firstWhere((d) => d.id == p.id);
-      final expiresAt = (doc.data()?['expiresAt'] as Timestamp?)?.toDate();
-      if (expiresAt == null) return true; // ถ้าไม่มีฟิลด์นี้ก็ไม่กรอง
-      return expiresAt.isAfter(now);
-    }).toList();
-
-    // 🔹 ถ้ามีพิมพ์คำค้น ให้กรองเพิ่มเติม (ค้นไม่ต้องตรงเป๊ะ)
-    if (s.isNotEmpty) {
-      all = all
-          .where((p) => p.title.toLowerCase().contains(s))
-          .toList();
-    }
-
-    // 🔹 เรียงจากใหม่ → เก่า
-    all.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-    setState(() {
-      _items = all;
-      _cursor = snap.docs.isNotEmpty ? snap.docs.last : null;
-    });
-  } catch (e) {
-    debugPrint('Error loading posts: $e');
-  } finally {
-    if (mounted) setState(() => _loading = false);
   }
-}
 
-Future<void> _loadMore() async {
-  if (_cursor == null) return;
-  setState(() => _loadingMore = true);
-  try {
-    final now = DateTime.now();
+  Future<void> _loadMore() async {
+    if (_cursor == null) return;
+    setState(() => _loadingMore = true);
+    try {
+      Query<Map<String, dynamic>> q =
+          _col.orderBy('createdAt', descending: true).startAfterDocument(_cursor!).limit(10);
+      if (_selectedTag != null) {
+        q = q.where('tag', isEqualTo: _tagTo(_selectedTag!));
+      }
+      final snap = await q.get();
+      final now = DateTime.now();
+      var more = snap.docs.map(Post.fromDoc).toList();
 
-    Query<Map<String, dynamic>> q = _col
-        .orderBy('createdAt', descending: true)
-        .startAfterDocument(_cursor!)
-        .limit(10);
+      more = more.where((p) {
+        final doc = snap.docs.firstWhere((d) => d.id == p.id);
+        final expiresAt = (doc.data()['expiresAt'] as Timestamp?)?.toDate();
+        return expiresAt == null || expiresAt.isAfter(now);
+      }).toList();
 
-    if (_selectedTag != null) {
-      q = q.where('tag', isEqualTo: _tagTo(_selectedTag!));
+      more.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      setState(() {
+        _items.addAll(more);
+        _cursor = snap.docs.isNotEmpty ? snap.docs.last : null;
+      });
+    } catch (e) {
+      debugPrint('loadMore error: $e');
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
     }
-
-    final snap = await q.get();
-    var more = snap.docs.map(Post.fromDoc).toList();
-
-    // 🔹 กรองโพสต์ที่ยังไม่หมดอายุ
-    more = more.where((p) {
-      final doc = snap.docs.firstWhere((d) => d.id == p.id);
-      final expiresAt = (doc.data()?['expiresAt'] as Timestamp?)?.toDate();
-      if (expiresAt == null) return true;
-      return expiresAt.isAfter(now);
-    }).toList();
-
-    // 🔹 เรียงใหม่ -> เก่า เผื่อ Firestore ลำดับไม่เป๊ะ
-    more.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-    setState(() {
-      _items.addAll(more);
-      _cursor = snap.docs.isNotEmpty ? snap.docs.last : null;
-    });
-  } on FirebaseException catch (e) {
-    if (!mounted) return;
-    final msg = e.message ?? e.code;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('ต้องสร้าง Firestore index: $msg')),
-    );
-  } finally {
-    if (mounted) setState(() => _loadingMore = false);
   }
-}
-
-
 
   Future<void> _onRefresh() async {
     _cursor = null;
@@ -240,258 +168,149 @@ Future<void> _loadMore() async {
     _loadFirst();
   }
 
+  Future<void> _onBottomTap(int i) async {
+    switch (i) {
+      case 0:
+        break;
+      case 1:
+        Navigator.pushReplacementNamed(context, '/leaderboard');
+        break;
+      case 2:
+        await Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatePostPage()));
+        break;
+      case 3:
+        Navigator.pushReplacementNamed(context, '/chat');
+        break;
+      case 4:
+        Navigator.pushReplacementNamed(context, '/profile');
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return CurvedNavScaffold(
+      currentIndex: 0,
+      chatBadge: _chatBadge,
+      onTap: _onBottomTap,
       appBar: AppBar(
         title: const Text('Home'),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout_rounded),
-            tooltip: 'Logout',
             onPressed: () async {
               try {
                 await FirebaseAuth.instance.signOut();
                 if (!context.mounted) return;
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const AppGate()),
-                  (route) => false,
-                );
+                // เคลียร์ทุกหน้าก่อนหน้า แล้วไปหน้า login
+                Navigator.of(context).pushNamedAndRemoveUntil('/login', (r) => false);
               } catch (e) {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Logout failed: $e')),
+                  SnackBar(content: Text('ออกจากระบบไม่สำเร็จ: $e')),
                 );
               }
             },
           ),
         ],
       ),
-
-      // ====== BottomBar สีดำเต็มจอ ======
-      body: BottomBar(
-        fit: StackFit.expand,
-        barAlignment: Alignment.bottomCenter,
-        width: double.infinity,
-        start: 0,
-        end: 0,
-        offset: 0,
-        showIcon: false,             
-        hideOnScroll: true,
-        scrollOpposite: false,
-        duration: const Duration(milliseconds: 420),
-        curve: Curves.decelerate,
-        barDecoration: const BoxDecoration(
-          color: Color.fromARGB(255, 165, 206, 240),
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(20),
-            topRight: Radius.circular(20),
-          ),
-        ),
-
-        // ---------- แถบแท็บ ----------
-        child: TabBar(
-          controller: _tabController,
-          overlayColor: MaterialStateProperty.all(Colors.transparent),
-          dividerColor: Colors.transparent,
-          indicatorPadding: const EdgeInsets.fromLTRB(6, 0, 6, 0),
-          indicator: const UnderlineTabIndicator(
-            borderSide: BorderSide(color: Color.fromARGB(255, 86, 155, 247), width: 3),
-            insets: EdgeInsets.fromLTRB(16, 0, 16, 8),
-          ),
-          onTap: (i) async {
-            // ➕ โพสต์ (แท็บกลาง)
-            if (i == 2) {
-              final created = await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CreatePostPage()),
-              );
-              if (!mounted) return;
-              if (created == true) _onRefresh();
-              _tabController.animateTo(0);
-              return;
-            }
-            // 💬 แชท
-            if (i == 3) {
-              Navigator.pushNamed(context, '/chat');
-              _tabController.animateTo(_currentPage);
-              return;
-            }
-            if (i == 1) {
-              Navigator.pushNamed(context, '/leaderboard');
-              _tabController.animateTo(_currentPage);
-              return;
-            }
-            // 👤 โปรไฟล์
-            if (i == 4) {
-              Navigator.pushNamed(context, '/profile');
-              _tabController.animateTo(_currentPage);
-              return;
-            }
-            _tabController.animateTo(i);
-          },
-          tabs: [
-            SizedBox(
-              height: 55, width: 40,
-              child: Center(child: Icon(Icons.home, color: Colors.white)),
-            ),
-            SizedBox(
-              height: 55, width: 40,
-              child: Center(child: Icon(Icons.search, color: Colors.white)),
-            ),
-            SizedBox(
-              height: 55, width: 40,
-              child: Center(child: Icon(Icons.add, color: Colors.white)), // ขนาดเท่ากับแท็บอื่น
-            ),
-            SizedBox(
-              height: 55, width: 40,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const Center(child: Icon(Icons.chat_bubble_rounded, color: Colors.white)),
-                  if (_notif > 0)
-                    Positioned(
-                      right: -6, top: -4,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                        constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-                        child: Center(
-                          child: Text('$_notif', style: const TextStyle(color: Colors.white, fontSize: 10)),
-                        ),
+      bodyBuilder: (context) {
+        return SafeArea(
+          child: RefreshIndicator(
+            onRefresh: _onRefresh,
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (n) {
+                if (!_loadingMore &&
+                    _cursor != null &&
+                    n.metrics.pixels > n.metrics.maxScrollExtent - 300) {
+                  _loadMore();
+                }
+                return false;
+              },
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _search,
+                              textInputAction: TextInputAction.search,
+                              onSubmitted: (_) => _loadFirst(),
+                              decoration: InputDecoration(
+                                hintText: 'Search',
+                                prefixIcon: const Icon(Icons.search_rounded),
+                                suffixIcon: (_search.text.isEmpty)
+                                    ? null
+                                    : IconButton(
+                                        icon: const Icon(Icons.close_rounded),
+                                        onPressed: () {
+                                          _search.clear();
+                                          _loadFirst();
+                                        },
+                                      ),
+                                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+                                filled: true,
+                                fillColor: const Color(0xFFF5F6F7),
+                              ),
+                              onChanged: (_) => setState(() {}),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          _FilterButton(badge: _activeFilters, onTap: _openFilter),
+                        ],
                       ),
                     ),
+                  ),
+                  if (_loading)
+                    const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.only(top: 80),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    )
+                  else if (_items.isEmpty)
+                    const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.only(top: 80),
+                        child: Center(child: Text('No posts found')),
+                      ),
+                    )
+                  else
+                    SliverList.separated(
+                      itemCount: _items.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 14),
+                      itemBuilder: (_, i) => _PostCard(post: _items[i]),
+                    ),
+                  SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: 80,
+                      child: Center(
+                        child: _loadingMore
+                            ? const Padding(
+                                padding: EdgeInsets.only(bottom: 12),
+                                child: CircularProgressIndicator(),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-            const SizedBox(
-              height: 55, width: 40,
-              child: Center(child: Icon(Icons.person, color: Colors.white)),
-            ),
-          ],
-        ),
-
-        // ---------- เนื้อหาแต่ละแท็บ ----------
-        body: (context, controller) => TabBarView(
-          controller: _tabController,
-          dragStartBehavior: DragStartBehavior.down,
-          physics: const NeverScrollableScrollPhysics(),
-          children: [
-            // ===== Home =====
-            SafeArea(
-              child: RefreshIndicator(
-                onRefresh: _onRefresh,
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: (n) {
-                    if (!_loadingMore &&
-                        _cursor != null &&
-                        n.metrics.pixels > n.metrics.maxScrollExtent - 300) {
-                      _loadMore();
-                    }
-                    return false;
-                  },
-                  child: CustomScrollView(
-                    controller: controller, // ใช้ controller ของ BottomBar เพื่อ hideOnScroll
-                    slivers: [
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _search,
-                                  textInputAction: TextInputAction.search,
-                                  onSubmitted: (_) => _loadFirst(),
-                                  decoration: InputDecoration(
-                                    hintText: 'Search',
-                                    prefixIcon: const Icon(Icons.search_rounded),
-                                    suffixIcon: (_search.text.isEmpty)
-                                        ? null
-                                        : IconButton(
-                                            icon: const Icon(Icons.close_rounded),
-                                            onPressed: () {
-                                              _search.clear();
-                                              _loadFirst();
-                                            },
-                                          ),
-                                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                                    filled: true,
-                                    fillColor: const Color(0xFFF5F6F7),
-                                  ),
-                                  onChanged: (_) => setState(() {}), // เพื่อโชว์/ซ่อนปุ่ม ✕ แบบทันที
-                                ),
-
-                              ),
-                              const SizedBox(width: 10),
-                              _FilterButton(badge: _activeFilters, onTap: _openFilter),
-                            ],
-                          ),
-                        ),
-                      ),
-                      if (_loading)
-                        const SliverToBoxAdapter(
-                          child: Padding(
-                            padding: EdgeInsets.only(top: 80),
-                            child: Center(child: CircularProgressIndicator()),
-                          ),
-                        )
-                      else if (_items.isEmpty)
-                        const SliverToBoxAdapter(
-                          child: Padding(
-                            padding: EdgeInsets.only(top: 80),
-                            child: Center(child: Text('No posts found')),
-                          ),
-                        )
-                      else
-                        SliverList.separated(
-                          itemCount: _items.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 14),
-                          itemBuilder: (_, i) => _PostCard(post: _items[i]),
-                        ),
-                      SliverToBoxAdapter(
-                        child: SizedBox(
-                          height: 80,
-                          child: Center(
-                            child: _loadingMore
-                                ? const Padding(
-                                    padding: EdgeInsets.only(bottom: 12),
-                                    child: CircularProgressIndicator(),
-                                  )
-                                : const SizedBox.shrink(),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            // ===== Search =====
-            const Center(child: Text('test')),
-
-            // ===== Add (แค่บอกให้ใช้แท็บกลาง) =====
-            const Center(child: Text('กด ➕ ที่แท็บล่างเพื่อสร้างโพสต์')),
-
-            // ===== Chat (เปิดจากแท็บแล้ว) =====
-            const Center(child: Text('Chat page (เปิดจากแท็บ 💬)')),
-
-            // ===== Profile (เปิดจากแท็บแล้ว) =====
-            const Center(child: Text('Profile page (เปิดจากแท็บ 👤)')),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
 
-/// ------------------------------ Widgets ------------------------------
 class _FilterSheet extends StatefulWidget {
   const _FilterSheet({required this.selected});
   final PostTag? selected;
-
   @override
   State<_FilterSheet> createState() => _FilterSheetState();
 }
@@ -561,14 +380,13 @@ class _FilterButton extends StatelessWidget {
         ),
         if (hasBadge)
           Positioned(
-            right: -2,
-            top: -2,
+            right: -2, top: -2,
             child: Container(
               padding: const EdgeInsets.all(5),
               decoration: BoxDecoration(color: Colors.blue, borderRadius: BorderRadius.circular(12)),
               constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
               child: Center(
-                child: Text('$badge', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                child: Text('${badge!}', style: const TextStyle(color: Colors.white, fontSize: 12)),
               ),
             ),
           ),
@@ -584,7 +402,6 @@ class _PostCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hint = Theme.of(context).textTheme.bodySmall?.color?.withOpacity(.7);
-
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
@@ -592,74 +409,56 @@ class _PostCard extends StatelessWidget {
           Row(
             children: [
               StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                stream: FirebaseFirestore.instance
-                    .collection('publicUsers')
-                    .doc(post.userId)
-                    .snapshots(),
+                stream: FirebaseFirestore.instance.collection('publicUsers').doc(post.userId).snapshots(),
                 builder: (context, snap) {
-  final data = snap.data?.data();
-  final name = (data?['displayName'] ?? post.userName ?? 'ไม่ระบุ').toString();
-  final photoURL = (data?['photoURL'] ?? post.userAvatar ?? '') as String?;
-  final verified = (data?['verified'] ?? false) == true;
+                  final data = snap.data?.data();
+                  final name = (data?['displayName'] ?? post.userName).toString();
+                  final photoURL = (data?['photoURL'] ?? post.userAvatar) as String?;
+                  final verified = (data?['verified'] ?? false) == true;
 
-  return InkWell(
-    onTap: () {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => ProfileViewPage(viewUid: post.userId)),
-      );
-    },
-    borderRadius: BorderRadius.circular(999),
-    child: Row(
-      children: [
-        CircleAvatar(
-          radius: 20,
-          backgroundImage: (photoURL != null && photoURL.isNotEmpty)
-              ? NetworkImage(photoURL)
-              : null,
-          child: (photoURL == null || photoURL.isEmpty)
-              ? const Icon(Icons.person)
-              : null,
-        ),
-        const SizedBox(width: 8),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 180),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              if (verified) ...[
-                const SizedBox(width: 6),
-                const Icon(Icons.verified, size: 16, color: Color(0xFF2ECC71)),
-              ],
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-},
-              ),
-
-              const Spacer(),
-
-              // แท็กโพสต์
-              _TagChip(
-                text: switch (post.tag) {
-                  PostTag.donate => 'บริจาค',
-                  PostTag.swap => 'แลกเปลี่ยน',
-                  PostTag.announce => 'ประกาศ',
+                  return InkWell(
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => ProfileViewPage(viewUid: post.userId)),
+                    ),
+                    borderRadius: BorderRadius.circular(999),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 20,
+                          backgroundImage: (photoURL != null && photoURL.isNotEmpty) ? NetworkImage(photoURL) : null,
+                          child: (photoURL == null || photoURL.isEmpty) ? const Icon(Icons.person) : null,
+                        ),
+                        const SizedBox(width: 8),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 180),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                              ),
+                              if (verified) ...[
+                                const SizedBox(width: 6),
+                                const Icon(Icons.verified, size: 16, color: Color(0xFF2ECC71)),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
                 },
               ),
+              const Spacer(),
+              _TagChip(text: switch (post.tag) {
+                PostTag.donate => 'บริจาค',
+                PostTag.swap => 'แลกเปลี่ยน',
+                _ => 'ประกาศ',
+              }),
               const SizedBox(width: 6),
-
-              // ปุ่มแชทกับเจ้าของโพสต์
               IconButton(
                 icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
                 tooltip: 'แชทกับผู้โพสต์',
@@ -679,8 +478,7 @@ class _PostCard extends StatelessWidget {
                     postId: post.id,
                     postTitle: post.title,
                   );
-                  final chatId = ChatService.instance
-                      .chatIdOf(myUid, post.userId, postId: post.id);
+                  final chatId = ChatService.instance.chatIdOf(myUid, post.userId, postId: post.id);
                   if (!context.mounted) return;
                   Navigator.push(
                     context,
@@ -743,23 +541,16 @@ class _TagChip extends StatelessWidget {
 
   Color _bg() {
     switch (text) {
-      case 'บริจาค':
-        return const Color(0xFFEAF7EE);
-      case 'แลกเปลี่ยน':
-        return const Color(0xFFE9F3FF);
-      default:
-        return const Color(0xFFFFF5E5);
+      case 'บริจาค': return const Color(0xFFEAF7EE);
+      case 'แลกเปลี่ยน': return const Color(0xFFE9F3FF);
+      default: return const Color(0xFFFFF5E5);
     }
   }
-
   Color _fg() {
     switch (text) {
-      case 'บริจาค':
-        return const Color(0xFF2FA562);
-      case 'แลกเปลี่ยน':
-        return const Color(0xFF2E6EEA);
-      default:
-        return const Color(0xFFAD7A12);
+      case 'บริจาค': return const Color(0xFF2FA562);
+      case 'แลกเปลี่ยน': return const Color(0xFF2E6EEA);
+      default: return const Color(0xFFAD7A12);
     }
   }
 

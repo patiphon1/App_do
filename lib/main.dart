@@ -18,9 +18,11 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'features/chat/chat_from_notif_page.dart';
 import 'features/auth/pages/leaderboard_page.dart';
-
+import 'home_page.dart';
 import 'features/auth/pages/admin_verifications_page.dart';
 import 'features/auth/pages/admin_user_manager_page.dart';
+
+import 'features/auth/pages/login_page.dart';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 // ใช้ตอน background isolate
 @pragma('vm:entry-point')
@@ -38,20 +40,24 @@ const AndroidNotificationChannel _chatChannel = AndroidNotificationChannel(
 );
 
 Future<void> backfillPublicUsers() async {
-  final fs = FirebaseFirestore.instance;
-  final users = await fs.collection('users').get();
-  for (final d in users.docs) {
-    final data = d.data();
-    final name = (data['displayName'] ?? data['email'] ?? 'ไม่ระบุ').toString();
-    await fs.collection('publicUsers').doc(d.id).set({
-      'displayName': name,
-      'photoURL': (data['photoURL'] ?? '').toString(),
-      'verified': (data['verified'] ?? false) == true,
-      // รองรับชื่อเก่า (ratingsCount) หรือชื่อใหม่ (ratingCount)
-      'ratingCount': (data['ratingCount'] ?? data['ratingsCount'] ?? 0) as int,
-    }, SetOptions(merge: true));
+  try {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      // ไม่ล็อกอิน: ข้าม (หรือจะอ่านเฉพาะ collection ที่ rules อนุญาตสาธารณะ)
+      return;
+    }
+
+    // ตัวอย่าง: อ่านเฉพาะ publicUsers (ควรอนุญาต read) แทน users
+    final snap = await FirebaseFirestore.instance
+        .collection('publicUsers')
+        .limit(1)
+        .get();
+
+    // ... ทำงานที่ต้องการต่อ (ถ้ามี)
+  } catch (e) {
+    debugPrint('backfillPublicUsers skipped: $e');
+    // สำคัญ: ห้าม rethrow เพื่อไม่ให้ crash ตอน logout/start
   }
-  debugPrint('✅ backfill publicUsers done');
 }
 
 Future<void> _initLocalNotifications() async {
@@ -215,6 +221,9 @@ class _AppState extends State<App> {
         '/leaderboard': (_) => const LeaderboardPage(),
         '/admin': (_) => const AdminVerificationsPage(),
         '/admin/users': (_) => const AdminUserManagerPage(),
+        '/home': (_) => const HomePage(),
+        '/login': (_) => const LoginPage(),
+
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/verify') {

@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:curved_navigation_bar/curved_navigation_bar.dart';
+
 import 'chat_p2p_page.dart';
 import '../../services/chat_service.dart';
+import '../../features/auth/pages/create_post_page.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({super.key});
@@ -12,23 +15,85 @@ class ChatListPage extends StatefulWidget {
 }
 
 class _ChatListPageState extends State<ChatListPage> with TickerProviderStateMixin {
-  late final TabController _tab = TabController(length: 3, vsync: this);
+  // แท็บบน (บริจาค/ขอรับ/แลกเปลี่ยน)
+  late final TabController _topTab = TabController(length: 3, vsync: this);
+
+  // เมนูล่าง (0=home,1=search/leaderboard,2=add,3=chat,4=profile)
+  int _bottomIndex = 3;
+
+  // ตัวอย่าง badge ที่ไอคอนแชท (คุณจะเปลี่ยนเป็นค่าจริงจาก backend ก็ได้)
+  int _chatBadge = 2;
+
+  @override
+  void initState() {
+    super.initState();
+    // ให้เปิดที่ "ขอรับ" เพราะส่วนใหญ่มักมีเธรดอยู่ที่ kind: 'request'
+    _topTab.index = 1;
+  }
+
+  @override
+  void dispose() {
+    _topTab.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleBottomTap(int i) async {
+    if (i == _bottomIndex) return;
+
+    // ปุ่มกลาง: เปิดหน้าสร้างโพสต์ แล้วคง index เดิมไว้ (หน้าแชท)
+    if (i == 2) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const CreatePostPage()),
+      );
+      return;
+    }
+
+    // อัปเดตอินเด็กซ์เพื่อให้ไฮไลต์ถูกต้อง
+    setState(() => _bottomIndex = i);
+
+    // นำทางไป route หลัก (ใช้ pushReplacementNamed เพื่อไม่ซ้อนสแตกหน้าเดิม)
+    switch (i) {
+      case 0:
+        Navigator.pushReplacementNamed(context, '/home');
+        break;
+      case 1:
+        Navigator.pushReplacementNamed(context, '/leaderboard'); // หรือ '/search'
+        break;
+      case 3:
+        // อยู่หน้า Chat อยู่แล้ว (ถ้าเรียกจากหน้าอื่น ให้ใช้ route '/chat')
+        // Navigator.pushReplacementNamed(context, '/chat');
+        break;
+      case 4:
+        Navigator.pushReplacementNamed(context, '/profile');
+        break;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // ---------- AppBar + แท็บหมวดแชท ----------
       appBar: AppBar(
-        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+        automaticallyImplyLeading: false,
+        leading: Navigator.of(context).canPop()
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () async {
+                  final popped = await Navigator.maybePop(context);
+                  if (!popped && context.mounted) {
+                    Navigator.pushReplacementNamed(context, '/home');
+                  }
+                },
+              )
+            : null,
         title: const Text('Chat', style: TextStyle(fontWeight: FontWeight.w700)),
-        actions: [
-          IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_none_rounded)),
-        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(44),
           child: Column(
             children: [
               TabBar(
-                controller: _tab,
+                controller: _topTab,
                 labelPadding: const EdgeInsets.symmetric(horizontal: 18),
                 indicatorSize: TabBarIndicatorSize.tab,
                 indicatorWeight: 3,
@@ -43,36 +108,53 @@ class _ChatListPageState extends State<ChatListPage> with TickerProviderStateMix
           ),
         ),
       ),
+
+      // ---------- เนื้อหาแชท ----------
       body: TabBarView(
-        controller: _tab,
+        controller: _topTab,
         children: const [
           _ChatList(kind: 'donate'),
           _ChatList(kind: 'request'),
           _ChatList(kind: 'swap'),
         ],
       ),
-      bottomNavigationBar: BottomAppBar(
-        child: SizedBox(
-          height: 56,
-          child: Row(
+
+      // ---------- เมนูล่างแบบโค้ง (ฟ้าอ่อน) ----------
+      bottomNavigationBar: CurvedNavigationBar(
+        items: [
+          const Icon(Icons.home, color: Colors.white),
+          const Icon(Icons.search, color: Colors.white),
+          const Icon(Icons.add, color: Colors.white),
+          Stack(
+            clipBehavior: Clip.none,
             children: [
-              _Nav(icon: Icons.home_rounded, onTap: () {/* TODO: ไปหน้า Home */}),
-              _Nav(icon: Icons.notifications_rounded, badge: 1, onTap: () {/* TODO: ไปหน้าแจ้งเตือน */}),
-              const Spacer(),
-              _Nav(icon: Icons.chat_bubble_rounded, active: true, onTap: () {/* อยู่หน้า Chat แล้ว */}),
-              _Nav(icon: Icons.person_rounded, onTap: () {/* TODO: ไปหน้าโปรไฟล์ */}),
+              const Center(child: Icon(Icons.chat_bubble_rounded, color: Colors.white)),
+              if (_chatBadge > 0)
+                Positioned(
+                  right: -6, top: -4,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                    constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                    child: Center(child: Text('$_chatBadge', style: const TextStyle(color: Colors.white, fontSize: 10))),
+                  ),
+                ),
             ],
           ),
-        ),
+          const Icon(Icons.person, color: Colors.white),
+        ],
+        index: _bottomIndex,
+        height: 60,
+        color: const Color.fromARGB(255, 165, 206, 240),       // 💙 สีบาร์ฟ้าอ่อน
+        buttonBackgroundColor: const Color.fromARGB(255, 86, 155, 247), // ปุ่มกลม
+        backgroundColor: Colors.transparent,
+        onTap: _handleBottomTap,
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {},
-        child: const Icon(Icons.add),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
     );
   }
 }
+
+// ... import เดิมคงไว้
 
 class _ChatList extends StatelessWidget {
   const _ChatList({required this.kind});
@@ -80,8 +162,20 @@ class _ChatList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    final myUid = user?.uid;
+
+    // ถ้าไม่ล็อกอิน: ไม่เปิด stream และไม่ใช้ operator !
+    if (myUid == null) {
+      return _CenteredNote(
+        title: 'ยังไม่ได้ล็อกอิน',
+        subtitle: 'เข้าสู่ระบบเพื่อดูแชทของคุณ',
+        actionText: 'ไปหน้า Home',
+        onAction: () => Navigator.pushReplacementNamed(context, '/home'),
+      );
+    }
+
     final svc = ChatService.instance;
-    final myUid = FirebaseAuth.instance.currentUser!.uid;
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: svc.myThreads(kind: kind),
@@ -99,11 +193,9 @@ class _ChatList extends StatelessWidget {
           );
         }
 
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
 
-        final docs = snap.data?.docs ?? [];
+        final docs = snap.data!.docs;
         if (docs.isEmpty) {
           return const Center(child: Text('ยังไม่มีแชทในหมวดนี้'));
         }
@@ -116,14 +208,13 @@ class _ChatList extends StatelessWidget {
             final data = docs[i].data();
 
             final lastText = (data['lastText'] ?? '') as String;
-            final unread = (data['unread']?[myUid] ?? 0) as int;
             final ts = (data['lastAt'] as Timestamp?)?.toDate();
             final timeLabel = _fmtTime(ts);
 
             final postId = (data['postId'] as String?) ?? '';
             final postTitle = (data['postTitle'] as String?) ?? '';
 
-            // หา peerId จาก peerMap หรือ users
+            // หา peerId
             String peerId = '';
             final peerMap = data['peerMap'] as Map<String, dynamic>?;
             if (peerMap != null && peerMap[myUid] is String) {
@@ -133,6 +224,10 @@ class _ChatList extends StatelessWidget {
               peerId = users.firstWhere((u) => u != myUid, orElse: () => '');
             }
             if (peerId.isEmpty) return const SizedBox.shrink();
+
+            // unread ต้องป้องกัน null key
+            final unreadMap = (data['unread'] as Map<String, dynamic>?) ?? const {};
+            final unread = (myUid != null) ? (unreadMap[myUid] ?? 0) as int : 0;
 
             return ListTile(
               leading: const CircleAvatar(),
@@ -200,37 +295,6 @@ class _ChatList extends StatelessWidget {
   }
 }
 
-class _Nav extends StatelessWidget {
-  const _Nav({required this.icon, this.active = false, this.badge, this.onTap});
-  final IconData icon;
-  final bool active;
-  final int? badge;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = active ? Theme.of(context).colorScheme.primary : Colors.black87;
-    return Expanded(
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          InkWell(onTap: onTap, child: SizedBox(height: 56, child: Icon(icon, color: color))),
-          if ((badge ?? 0) > 0)
-            Positioned(
-              right: MediaQuery.of(context).size.width * .18,
-              top: 6,
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(10)),
-                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                child: Center(child: Text('$badge', style: const TextStyle(color: Colors.white, fontSize: 10))),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
 
 class _CenteredNote extends StatelessWidget {
   const _CenteredNote({required this.title, this.subtitle, this.actionText, this.onAction});

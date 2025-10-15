@@ -7,7 +7,6 @@ import '../../../services/storage_service.dart';
 
 class CreatePostPage extends StatefulWidget {
   const CreatePostPage({super.key});
-
   @override
   State<CreatePostPage> createState() => _CreatePostPageState();
 }
@@ -19,15 +18,13 @@ class _CreatePostPageState extends State<CreatePostPage> {
   File? _image;
   bool _loading = false;
 
-  List<String> _keywords(String s) {
-    return s
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9ก-๙\s]'), ' ')
-        .split(RegExp(r'\s+'))
-        .where((w) => w.isNotEmpty)
-        .toSet()
-        .toList();
-  }
+  List<String> _keywords(String s) => s
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9ก-๙\s]'), ' ')
+      .split(RegExp(r'\s+'))
+      .where((w) => w.isNotEmpty)
+      .toSet()
+      .toList();
 
   Future<void> _pickFrom(ImageSource src) async {
     final picker = ImagePicker();
@@ -75,18 +72,15 @@ class _CreatePostPageState extends State<CreatePostPage> {
 
     setState(() => _loading = true);
     try {
-      // 1) อัปโหลดรูป (ถ้ามี)
       String? imageUrl;
       if (_image != null) {
         imageUrl = await StorageService().uploadPostImage(_image!, user.uid);
       }
 
-      // 2) เตรียมข้อมูลเจ้าของจาก users/<uid> (เอาไปติดในโพสต์)
-      final u = user; // แค่ alias ให้โค้ดอ่านง่าย
+      final u = user;
       final meSnap = await FirebaseFirestore.instance.doc('users/${u.uid}').get();
       final me = meSnap.data() ?? <String, dynamic>{};
 
-      // 3) เขียนเอกสารโพสต์
       final now = DateTime.now();
       final expiresAt = Timestamp.fromDate(now.add(const Duration(days: 7)));
 
@@ -94,21 +88,16 @@ class _CreatePostPageState extends State<CreatePostPage> {
         'userId'       : u.uid,
         'userName'     : u.displayName ?? (u.email ?? 'User'),
         'userAvatar'   : u.photoURL ?? '',
-
         'title'        : _title.text.trim(),
         'imageUrl'     : imageUrl,
-        'tag'          : _tag,                 // 'announce' | 'donate' | 'swap'
+        'tag'          : _tag,
         'comments'     : 0,
         'expiresAt'    : expiresAt,
         'createdAt'    : FieldValue.serverTimestamp(),
         'titleKeywords': _keywords(_title.text),
-
-        // ✅ ติดข้อมูลเจ้าของไว้กับโพสต์เลย — ลดการอ่าน users/<owner> ทีหลัง
         'ownerDisplayName': (me['displayName'] ?? u.displayName ?? u.email ?? 'ผู้ใช้'),
         'ownerPhotoURL'   : (me['photoURL'] ?? u.photoURL ?? ''),
         'ownerVerified'   : (me['verified'] ?? false) == true,
-
-        // ค่าเรตติ้งตั้งต้น
         'ratingsTotal': 0,
         'ratingsCount': 0,
         'ratingAvg'   : 0,
@@ -143,7 +132,6 @@ class _CreatePostPageState extends State<CreatePostPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
-            // ข้อความ
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -201,7 +189,6 @@ class _CreatePostPageState extends State<CreatePostPage> {
 
             const SizedBox(height: 12),
 
-            // หมวดหมู่
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -229,7 +216,6 @@ class _CreatePostPageState extends State<CreatePostPage> {
 
             const SizedBox(height: 12),
 
-            // รูปภาพ
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -279,7 +265,6 @@ class _CreatePostPageState extends State<CreatePostPage> {
 
             const SizedBox(height: 20),
 
-            // ปุ่มโพสต์
             SizedBox(
               height: 48,
               child: FilledButton(
@@ -314,7 +299,6 @@ class _TagChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSelected = selected;
-
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
