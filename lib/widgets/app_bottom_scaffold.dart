@@ -57,7 +57,7 @@ class AppBottomScaffold extends StatelessWidget {
               },
               tabs: [
                 const _NavIcon(Icons.home),
-                const _NavIcon(Icons.search),
+                const _NavIcon(Icons.leaderboard),
                 const _NavIcon(Icons.add),
                 _ChatIcon(badge: badgeChat),
                 const _NavIcon(Icons.person),

@@ -204,7 +204,7 @@ class _CreatePostPageState extends State<CreatePostPage> {
                       spacing: 10,
                       runSpacing: 10,
                       children: [
-                        _TagChip(label: 'ประกาศ', selected: _tag == 'announce', onTap: () => setState(() => _tag = 'announce'), bg: const Color(0xFFFFF5E5), fg: const Color(0xFFAD7A12)),
+                        _TagChip(label: 'ขอรับ', selected: _tag == 'announce', onTap: () => setState(() => _tag = 'announce'), bg: const Color(0xFFFFF5E5), fg: const Color(0xFFAD7A12)),
                         _TagChip(label: 'บริจาค', selected: _tag == 'donate',   onTap: () => setState(() => _tag = 'donate'),   bg: const Color(0xFFEAF7EE), fg: const Color(0xFF2FA562)),
                         _TagChip(label: 'แลกเปลี่ยน', selected: _tag == 'swap', onTap: () => setState(() => _tag = 'swap'),     bg: const Color(0xFFE9F3FF), fg: const Color(0xFF2E6EEA)),
                       ],

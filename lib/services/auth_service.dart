@@ -21,25 +21,17 @@ class AuthService {
 
   Future<void> signOut() => _auth.signOut();
 
-  Future<void> sendResetEmail(String email) {
-    return _auth.sendPasswordResetEmail(email: email.trim());
-  }
+  Future<void> sendResetEmail(String email) => _auth.sendPasswordResetEmail(email: email.trim());
 }
 
 String mapAuthError(FirebaseAuthException e) {
   switch (e.code) {
-    case 'invalid-email':
-      return 'อีเมลไม่ถูกต้อง';
-    case 'user-disabled':
-      return 'บัญชีถูกปิดการใช้งาน';
+    case 'invalid-email': return 'อีเมลไม่ถูกต้อง';
+    case 'user-disabled': return 'บัญชีถูกปิดการใช้งาน';
     case 'user-not-found':
-    case 'wrong-password':
-      return 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
-    case 'email-already-in-use':
-      return 'อีเมลนี้ถูกใช้แล้ว';
-    case 'weak-password':
-      return 'รหัสผ่านอ่อนเกินไป';
-    default:
-      return e.message ?? 'เกิดข้อผิดพลาด';
+    case 'wrong-password': return 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
+    case 'email-already-in-use': return 'อีเมลนี้ถูกใช้แล้ว';
+    case 'weak-password': return 'รหัสผ่านอ่อนเกินไป';
+    default: return e.message ?? 'เกิดข้อผิดพลาด';
   }
 }

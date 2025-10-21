@@ -21,17 +21,23 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _doLogin() async {
     if (!formKey.currentState!.validate()) return;
+    if (loading) return; // กันกดรัว
     setState(() => loading = true);
     try {
-      await AuthService.instance.signIn(email.text, pass.text);
-      _show('เข้าสู่ระบบสำเร็จ'); // Navigator.pushReplacement ไปหน้า Home ของแอพ
+      await AuthService.instance.signIn(email.text.trim(), pass.text);
+      if (!mounted) return;
+      // นำทางไปหน้า Home และล้างสแตกกันย้อนกลับมาหน้า Login
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (r) => false);
     } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
       _show(mapAuthError(e));
+    } catch (e) {
+      if (!mounted) return;
+      _show('เกิดข้อผิดพลาด: $e');
     } finally {
       if (mounted) setState(() => loading = false);
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -108,14 +114,12 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         child: Text(
                           loading ? 'Please wait...' : 'Continue',
-                          style:
-                              const TextStyle(fontWeight: FontWeight.w600),
+                          style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),
                     ),
 
                     const SizedBox(height: 18),
-
 
                     // Bottom text
                     Row(
@@ -195,4 +199,3 @@ class _GradientTitle extends StatelessWidget {
     );
   }
 }
-

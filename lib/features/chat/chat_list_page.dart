@@ -123,7 +123,7 @@ class _ChatListPageState extends State<ChatListPage> with TickerProviderStateMix
       bottomNavigationBar: CurvedNavigationBar(
         items: [
           const Icon(Icons.home, color: Colors.white),
-          const Icon(Icons.search, color: Colors.white),
+          const Icon(Icons.leaderboard, color: Colors.white),
           const Icon(Icons.add, color: Colors.white),
           Stack(
             clipBehavior: Clip.none,

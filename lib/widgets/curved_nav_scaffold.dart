@@ -93,7 +93,7 @@ class _CurvedNavScaffoldState extends State<CurvedNavScaffold> {
         onTap: _handleTap,
         items: [
           const Icon(Icons.home, color: Colors.white),
-          const Icon(Icons.search, color: Colors.white),
+          const Icon(Icons.leaderboard, color: Colors.white),
           const Icon(Icons.add, color: Colors.white),
           Stack(
             clipBehavior: Clip.none,

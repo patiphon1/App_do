@@ -2,8 +2,10 @@ class AppUser {
   final String uid;
   final String email;
   final String? displayName;
+  /// เก็บเบอร์แบบเลขล้วน (เช่น 0812345678)
   final String? phone;
-  final String? idMasked; // เก็บเลขบัตรแบบปิดบังในอนาคต
+  /// เก็บเลขบัตรแบบปิดบังเท่านั้น (ไม่เก็บเลขจริงในโปรไฟล์)
+  final String? idMasked;
 
   AppUser({
     required this.uid,
@@ -19,6 +21,5 @@ class AppUser {
         'displayName': displayName,
         'phone': phone,
         'idMasked': idMasked,
-        'createdAt': DateTime.now(),
       };
 }
