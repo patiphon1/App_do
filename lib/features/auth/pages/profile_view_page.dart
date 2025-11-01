@@ -34,7 +34,7 @@ class ProfileViewPage extends StatelessWidget {
 
     final viewingSelf = targetUid == currentUid;
 
-    // ✅ สลับ source อัตโนมัติตามสิทธิ์
+    // สลับ source อัตโนมัติตามสิทธิ์
     final userDocStream = UserDoc.streamForView(targetUid);
 
     // โพสต์ของเจ้าของโปรไฟล์
@@ -87,7 +87,7 @@ class ProfileViewPage extends StatelessWidget {
             final bio = viewingSelf ? (u['bio'] ?? '') as String : '';
             final targetRole = viewingSelf ? u['role'] as String? : null;
 
-            // ✅ นิยาม isAdmin: ดูเฉพาะตอนดูตัวเอง และ role เป็น admin
+            // นิยาม isAdmin: ดูเฉพาะตอนดูตัวเอง และ role เป็น admin
             final isAdmin = viewingSelf && (targetRole == 'admin');
 
             return CustomScrollView(

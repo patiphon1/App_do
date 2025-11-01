@@ -211,11 +211,11 @@ class _AppState extends State<App> {
       title: 'Donation/Swap',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6EA8FF))),
-      home: const AppGate(), // <- ให้ Gate ตัดสินใจไป Login หรือ Home
+      home: const AppGate(), // ให้ Gate ตัดสินใจไป Login หรือ Home
       routes: {
         '/register': (_) => const RegisterPage(),
         '/forgot': (_) => const ForgotPasswordPage(),
-        '/chat': (_) => const ChatListPage(), // รับ arguments: {'chatId': ...}
+        '/chat': (_) => const ChatListPage(), 
         '/profile': (_) => const ProfileViewPage(),
         '/profile/edit': (_) => const ProfileEditPage(),
         '/leaderboard': (_) => const LeaderboardPage(),

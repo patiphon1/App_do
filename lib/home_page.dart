@@ -65,7 +65,7 @@ class _HomePageState extends State<HomePage> {
   List<Post> _items = [];
   DocumentSnapshot<Map<String, dynamic>>? _cursor;
   bool _loading = false, _loadingMore = false;
-  bool _signingOut = false; // ✅ กันแตะ logout ซ้ำ
+  bool _signingOut = false; //  กันแตะ logout ซ้ำ
   int _chatBadge = 2;
   PostTag? _selectedTag;
   int _activeFilters = 0;
@@ -73,7 +73,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    // ✅ ถ้า auth หลุดกลางทาง (เช่นโดน signOut จากที่อื่น) ให้ส่งกลับ /login นิ่ม ๆ
+    //  ถ้า auth หลุดกลางทาง ให้เด้งกลับ /login
     FirebaseAuth.instance.authStateChanges().listen((u) {
       if (u == null && mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -203,7 +203,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _confirmLogout() async {
-    if (_signingOut) return; // ✅ กันกดรัว
+    if (_signingOut) return; //  กันกดรัว
     final ok = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
@@ -220,10 +220,8 @@ class _HomePageState extends State<HomePage> {
 
     setState(() => _signingOut = true);
     try {
-      // ถ้าใช้ Google/Facebook ให้ signOut ที่ provider ด้วย (ถ้ามีในโปรเจ็กต์)
       await FirebaseAuth.instance.signOut();
       if (!mounted) return;
-      // ล้างสแตกให้หมด ป้องกันย้อนกลับมา Home ที่ยังมีสตรีมค้าง
       Navigator.of(context).pushNamedAndRemoveUntil('/login', (r) => false);
     } catch (e) {
       if (!mounted) return;
@@ -237,7 +235,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    // ✅ กันกรณี build ขึ้นมาทั้งที่ user หลุด (เช่นหลัง reinstall/clear data)
+    //  กันกรณี build ขึ้นมาทั้งที่ user หลุด
     final u = FirebaseAuth.instance.currentUser;
     if (u == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -255,7 +253,7 @@ class _HomePageState extends State<HomePage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.logout_rounded),
-            onPressed: _confirmLogout, // ✅ ใช้ฟังก์ชันใหม่
+            onPressed: _confirmLogout, //  ใช้ฟังก์ชันใหม่
             tooltip: 'ออกจากระบบ',
           ),
         ],
@@ -330,7 +328,18 @@ class _HomePageState extends State<HomePage> {
                     SliverList.separated(
                       itemCount: _items.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 14),
-                      itemBuilder: (_, i) => _PostCard(post: _items[i]),
+                      itemBuilder: (_, i) {
+                        final p = _items[i];
+                        return _PostCard(
+                          post: p,
+                          onDeleted: () {
+                            // เอาออกจากลิสต์เพื่อรีเฟรช UI ทันที
+                            setState(() {
+                              _items.removeWhere((e) => e.id == p.id);
+                            });
+                          },
+                        );
+                      },
                     ),
                   SliverToBoxAdapter(
                     child: SizedBox(
@@ -432,8 +441,8 @@ class _FilterButton extends StatelessWidget {
               padding: const EdgeInsets.all(5),
               decoration: BoxDecoration(color: Colors.blue, borderRadius: BorderRadius.circular(12)),
               constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
-              child: Center(
-                child: Text('${badge!}', style: const TextStyle(color: Colors.white, fontSize: 12)),
+              child: const Center(
+                child: Text('1', style: TextStyle(color: Colors.white, fontSize: 12)),
               ),
             ),
           ),
@@ -443,13 +452,15 @@ class _FilterButton extends StatelessWidget {
 }
 
 class _PostCard extends StatelessWidget {
-  const _PostCard({required this.post});
+  const _PostCard({required this.post, this.onDeleted});
   final Post post;
+  final VoidCallback? onDeleted;
 
   @override
   Widget build(BuildContext context) {
     final hint = Theme.of(context).textTheme.bodySmall?.color?.withOpacity(.7);
     final hasImage = (post.imageUrl != null && post.imageUrl!.isNotEmpty);
+    final myUid = FirebaseAuth.instance.currentUser?.uid;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -528,7 +539,6 @@ class _PostCard extends StatelessWidget {
                 icon: const Icon(Icons.chat_bubble_outline_rounded, size: 18),
                 tooltip: 'แชทกับผู้โพสต์',
                 onPressed: () async {
-                  final myUid = FirebaseAuth.instance.currentUser?.uid;
                   if (myUid == null) return;
                   if (myUid == post.userId) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -560,94 +570,136 @@ class _PostCard extends StatelessWidget {
                   );
                 },
               ),
+              if (myUid == post.userId)
+                IconButton(
+                  icon: const Icon(Icons.delete_outline_rounded, size: 20, color: Colors.redAccent),
+                  tooltip: 'ลบโพสต์นี้',
+                  onPressed: () async {
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        title: const Text('ยืนยันการลบ'),
+                        content: const Text('แน่ใจหรือไม่ว่าต้องการลบโพสต์นี้?'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('ยกเลิก')),
+                          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('ลบ')),
+                        ],
+                      ),
+                    ) ?? false;
+
+                    if (!ok) return;
+
+                    try {
+                      // ลบเอกสารโพสต์
+                      await FirebaseFirestore.instance.collection('posts').doc(post.id).delete();
+
+                      // TODO: (ถ้าต้องการ) ลบรูปจาก Firebase Storage ด้วย
+                      // ต้องรู้ storage path ที่แท้จริง ไม่ใช่ URL
+                      // final ref = FirebaseStorage.instance.refFromURL(post.imageUrl!);
+                      // await ref.delete();
+
+                      // ลบออกจาก UI ทันที
+                      onDeleted?.call();
+
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('ลบโพสต์เรียบร้อยแล้ว')),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('เกิดข้อผิดพลาดในการลบโพสต์: $e')),
+                        );
+                      }
+                    }
+                  },
+                ),
             ],
           ),
 
           const SizedBox(height: 8),
 
-          // ✅ แสดงรูปเฉพาะเมื่อมีรูปเท่านั้น — ถ้าไม่มีรูปจะไม่สร้างกล่องสีดำ
+          //  แสดงรูปเฉพาะเมื่อมีรูปเท่านั้น
           if (hasImage) ...[
-  AspectRatio(
-    aspectRatio: 16 / 9,
-    child: GestureDetector(
-      onTap: () => _showImagePopup(
-        context: context,
-        imageUrl: post.imageUrl!,
-        heroTag: 'post-image-${post.id}',
-        caption: post.title, // ใช้เป็นแคปชันในป๊อปอัป
-      ),
-      child: Hero(
-        tag: 'post-image-${post.id}',
-        // ทำให้ Hero โค้งมนทั้งขาไป/กลับ
-        flightShuttleBuilder: (ctx, anim, flightDir, from, to) {
-          final w = flightDir == HeroFlightDirection.pop ? from.widget : to.widget;
-          return ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: w,
-          );
-        },
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(.12),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.network(
-                post.imageUrl!,
-                fit: BoxFit.cover,
-                loadingBuilder: (ctx, child, progress) {
-                  if (progress == null) return child;
-                  return const _ShimmerPlaceholder();
-                },
-                errorBuilder: (_, __, ___) => const ColoredBox(
-                  color: Color(0x11000000),
-                  child: Center(child: Icon(Icons.broken_image_rounded)),
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: GestureDetector(
+                onTap: () => _showImagePopup(
+                  context: context,
+                  imageUrl: post.imageUrl!,
+                  heroTag: 'post-image-${post.id}',
+                  caption: post.title,
                 ),
-              ),
-              // ไล่เฉดล่าง + ไอคอนซูม
-              Positioned.fill(
-                child: Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                      colors: [Color(0x55000000), Color(0x00000000)],
-                      stops: [0, .6],
+                child: Hero(
+                  tag: 'post-image-${post.id}',
+                  flightShuttleBuilder: (ctx, anim, flightDir, from, to) {
+                    final w = flightDir == HeroFlightDirection.pop ? from.widget : to.widget;
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: w,
+                    );
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(.12),
+                          blurRadius: 20,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.network(
+                          post.imageUrl!,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (ctx, child, progress) {
+                            if (progress == null) return child;
+                            return const _ShimmerPlaceholder();
+                          },
+                          errorBuilder: (_, __, ___) => const ColoredBox(
+                            color: Color(0x11000000),
+                            child: Center(child: Icon(Icons.broken_image_rounded)),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.bottomCenter,
+                                end: Alignment.topCenter,
+                                colors: [Color(0x55000000), Color(0x00000000)],
+                                stops: [0, .6],
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 8,
+                          bottom: 8,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(28),
+                              boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 10)],
+                            ),
+                            padding: const EdgeInsets.all(8),
+                            child: const Icon(Icons.open_in_full_rounded, color: Colors.white, size: 18),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
-              Positioned(
-                right: 8,
-                bottom: 8,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(28),
-                    boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 10)],
-                  ),
-                  padding: const EdgeInsets.all(8),
-                  child: const Icon(Icons.open_in_full_rounded, color: Colors.white, size: 18),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
-  ),
-  const SizedBox(height: 8),
-],
-
+            ),
+            const SizedBox(height: 8),
+          ],
 
           Align(
             alignment: Alignment.centerLeft,
@@ -676,7 +728,6 @@ class _PostCard extends StatelessWidget {
     return '${diff.inDays} days ago';
   }
 }
-
 
 class _TagChip extends StatelessWidget {
   const _TagChip({required this.text});
@@ -707,7 +758,6 @@ class _TagChip extends StatelessWidget {
   }
 }
 
-
 void _showImagePopup({
   required BuildContext context,
   required String imageUrl,
@@ -725,7 +775,6 @@ void _showImagePopup({
       final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
       return Stack(
         children: [
-          // เบลอพื้นหลัง + เคลื่อนไหวตาม opacity
           Opacity(
             opacity: curved.value,
             child: BackdropFilter(
@@ -733,7 +782,6 @@ void _showImagePopup({
               child: const SizedBox.expand(),
             ),
           ),
-          // กล่องป๊อปอัปแบบเด้งนุ่มๆ
           Center(
             child: Transform.scale(
               scale: .95 + .05 * curved.value,
@@ -793,7 +841,6 @@ class _ImagePopupCardState extends State<_ImagePopupCard> {
         clipBehavior: Clip.antiAlias,
         child: Stack(
           children: [
-            // ภาพแบบ pinch-zoom + hero
             GestureDetector(
               onTapDown: (d) => _doubleTapDetails = d,
               onDoubleTap: _onDoubleTap,
@@ -817,8 +864,6 @@ class _ImagePopupCardState extends State<_ImagePopupCard> {
                 ),
               ),
             ),
-
-            // Top bar: ปิด + คัดลอกลิงก์
             Positioned(
               top: 8,
               left: 8,
@@ -843,8 +888,6 @@ class _ImagePopupCardState extends State<_ImagePopupCard> {
                 ],
               ),
             ),
-
-            // Bottom caption bar (ชื่อโพสต์สั้น ๆ)
             if ((widget.caption ?? '').isNotEmpty)
               Positioned(
                 left: 0, right: 0, bottom: 0,
@@ -889,6 +932,7 @@ class _ImagePopupCardState extends State<_ImagePopupCard> {
     );
   }
 }
+
 class _ShimmerPlaceholder extends StatefulWidget {
   const _ShimmerPlaceholder();
   @override

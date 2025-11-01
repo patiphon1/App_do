@@ -45,7 +45,7 @@ class UserRepository {
     }
   }
 
-  /// ✅ เวอร์ชันใหม่: ทำทุกอย่างใน Transaction โดย "ไม่ throw ใน callback"
+  /// เวอร์ชันใหม่: ทำทุกอย่างใน Transaction โดย "ไม่ throw ใน callback"
   /// - ถ้าซ้ำ จะ `return UniqueReservationResult(false, code: ...)`
   /// - ถ้าไม่ซ้ำ → เขียน uniques + users แล้ว `return UniqueReservationResult(true)`
   Future<UniqueReservationResult> createWithUniques(
